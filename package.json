@@ -1,0 +1,16 @@
+{
+  "name": "jetson-4dof-therapy-arm-sim",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Offline feasibility simulator for a configurable 4-DOF therapy arm on Jetson Orin Nano",
+  "scripts": {
+    "start": "python server.py",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
+

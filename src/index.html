@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Jetson Orin Nano 4自由度理疗机械臂正逆运动学可行性验证">
+  <title>4DOF Therapy Arm Lab</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div>
+        <h1>Therapy Arm Lab</h1>
+        <p>4DOF · Jetson feasibility simulator</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="offline-pill"><i></i> 完全离线</span>
+      <button id="reset-all" class="button ghost" type="button">恢复默认</button>
+      <button id="export-report" class="button ghost" type="button">导出验证报告</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="control-panel" aria-label="机械臂参数控制">
+      <section class="panel-section intro-section">
+        <div class="eyebrow">关节控制</div>
+        <h2>电机指令与旋向</h2>
+        <p>滑块是电机命令角。切换旋向后，数学关节角 = 命令角 × 方向。</p>
+      </section>
+
+      <section class="joint-list">
+        <article class="joint-card">
+          <div class="joint-title"><span><b>J1</b> 底座偏航</span><button data-direction="0" type="button"></button></div>
+          <div class="joint-input"><input id="q1" type="range" min="-170" max="170" step="0.5"><input id="q1-value" type="number" min="-170" max="170" step="0.5"><span>°</span></div>
+        </article>
+        <article class="joint-card">
+          <div class="joint-title"><span><b>J2</b> 肩部俯仰</span><button data-direction="1" type="button"></button></div>
+          <div class="joint-input"><input id="q2" type="range" min="-75" max="105" step="0.5"><input id="q2-value" type="number" min="-75" max="105" step="0.5"><span>°</span></div>
+        </article>
+        <article class="joint-card">
+          <div class="joint-title"><span><b>J3</b> 肘部俯仰</span><button data-direction="2" type="button"></button></div>
+          <div class="joint-input"><input id="q3" type="range" min="-135" max="135" step="0.5"><input id="q3-value" type="number" min="-135" max="135" step="0.5"><span>°</span></div>
+        </article>
+        <article class="joint-card">
+          <div class="joint-title"><span><b>J4</b> 腕部俯仰</span><button data-direction="3" type="button"></button></div>
+          <div class="joint-input"><input id="q4" type="range" min="-120" max="120" step="0.5"><input id="q4-value" type="number" min="-120" max="120" step="0.5"><span>°</span></div>
+        </article>
+      </section>
+
+      <details class="config-panel">
+        <summary><span>机械参数与安全阈值</span><small>按你的设计修改</small></summary>
+        <div class="config-body">
+          <div class="config-label">连杆尺寸 / m</div>
+          <div class="parameter-grid four">
+            <label>底座 h<input id="link-base" type="number" min="0.01" max="2" step="0.01"></label>
+            <label>上臂 L1<input id="link-upper" type="number" min="0.01" max="2" step="0.01"></label>
+            <label>前臂 L2<input id="link-forearm" type="number" min="0.01" max="2" step="0.01"></label>
+            <label>工具 L3<input id="link-tool" type="number" min="0.01" max="2" step="0.01"></label>
+          </div>
+          <div class="config-label">数学关节限位 / °</div>
+          <div class="limit-grid">
+            <span>J1</span><input id="limit-q1-min" type="number" step="1"><span>至</span><input id="limit-q1-max" type="number" step="1">
+            <span>J2</span><input id="limit-q2-min" type="number" step="1"><span>至</span><input id="limit-q2-max" type="number" step="1">
+            <span>J3</span><input id="limit-q3-min" type="number" step="1"><span>至</span><input id="limit-q3-max" type="number" step="1">
+            <span>J4</span><input id="limit-q4-min" type="number" step="1"><span>至</span><input id="limit-q4-max" type="number" step="1">
+          </div>
+          <div class="config-label">治疗空间边界 / m</div>
+          <div class="zone-grid">
+            <span>X</span><input id="zone-x-min" type="number" step="0.01"><span>—</span><input id="zone-x-max" type="number" step="0.01">
+            <span>Y</span><input id="zone-y-min" type="number" step="0.01"><span>—</span><input id="zone-y-max" type="number" step="0.01">
+            <span>Z</span><input id="zone-z-min" type="number" step="0.01"><span>—</span><input id="zone-z-max" type="number" step="0.01">
+          </div>
+          <div class="config-label">安全判定</div>
+          <div class="parameter-grid three">
+            <label>σmin 下限<input id="threshold-sigma" type="number" min="0.001" max="1" step="0.001"></label>
+            <label>条件数上限<input id="threshold-condition" type="number" min="1" max="1000" step="1"></label>
+            <label>限位余量 °<input id="threshold-margin" type="number" min="0" max="45" step="1"></label>
+          </div>
+          <button id="apply-config" class="button secondary wide" type="button">应用参数并重算工作空间</button>
+          <p id="config-error" class="config-error" role="alert"></p>
+        </div>
+      </details>
+
+      <form id="target-form" class="panel-section target-form">
+        <div class="eyebrow">逆运动学</div>
+        <h2>目标末端位置</h2>
+        <div class="coordinate-grid">
+          <label>X / m<input id="target-x" type="number" value="0.46" min="-0.8" max="0.8" step="0.01"></label>
+          <label>Y / m<input id="target-y" type="number" value="0.12" min="-0.8" max="0.8" step="0.01"></label>
+          <label>Z / m<input id="target-z" type="number" value="0.38" min="0" max="1" step="0.01"></label>
+        </div>
+        <label class="pitch-row"><span>期望工具俯仰</span><span><input id="target-pitch" type="number" value="-10" min="-180" max="180" step="1"> °</span></label>
+        <label class="check-row"><input id="auto-pitch" type="checkbox" checked><span>允许冗余自由度自动优化俯仰，避开奇异点</span></label>
+        <button id="solve-ik" class="button primary wide" type="submit">求解并移动到目标</button>
+      </form>
+
+      <section class="panel-section validation-section">
+        <div class="eyebrow">覆盖验证</div>
+        <h2>治疗空间网格扫描</h2>
+        <p id="zone-summary">X 0.20–0.56 m · Y ±0.28 m · Z 0.18–0.58 m</p>
+        <button id="scan-zone" class="button secondary wide" type="button">扫描治疗空间</button>
+        <div id="coverage-card" class="coverage-card" hidden>
+          <div><strong id="coverage-value">—</strong><span>安全覆盖率</span></div>
+          <div class="progress"><span id="coverage-bar"></span></div>
+          <p id="coverage-detail"></p>
+        </div>
+      </section>
+    </aside>
+
+    <section class="visual-stage">
+      <div class="stage-heading">
+        <div>
+          <div class="eyebrow">实时三维投影</div>
+          <h2>机械臂姿态与工作空间</h2>
+        </div>
+        <div class="legend" aria-label="图例">
+          <span><i class="safe-dot"></i>安全采样</span>
+          <span><i class="risk-dot"></i>风险/不可用</span>
+          <span><i class="zone-line"></i>治疗空间</span>
+        </div>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="arm-canvas" aria-label="机械臂三维视图"></canvas>
+        <div class="canvas-hint">拖动旋转 · 滚轮缩放</div>
+      </div>
+      <div id="status-card" class="status-card safe">
+        <div class="status-icon">✓</div>
+        <div><strong>检查中</strong><span>正在计算当前姿态</span></div>
+      </div>
+    </section>
+
+    <aside class="metrics-panel">
+      <section class="metric-hero">
+        <div class="eyebrow">TCP 状态</div>
+        <h2 id="tcp-position">—</h2>
+        <p id="tcp-orientation">—</p>
+      </section>
+
+      <section class="metric-card">
+        <div class="metric-title"><span>最小奇异值 σ<sub>min</sub></span><strong id="sigma-value">—</strong></div>
+        <div class="meter"><span id="sigma-meter"></span></div>
+        <p>阈值 0.025 m/rad；越大表示各方向运动余量越充分。</p>
+      </section>
+
+      <div class="metric-grid">
+        <section class="mini-card"><span>条件数</span><strong id="condition-value">—</strong><small>上限 60</small></section>
+        <section class="mini-card"><span>最小限位余量</span><strong id="margin-value">—</strong><small>下限 4°</small></section>
+        <section class="mini-card"><span>治疗空间</span><strong id="zone-value">—</strong><small>末端位置</small></section>
+      </div>
+
+      <section class="notice-card">
+        <div class="notice-icon">!</div>
+        <div><strong>仿真边界</strong><p>本工具验证几何可达性和一阶运动学风险，不包含动力学、碰撞体、柔顺控制、力/扭矩限制、硬件急停或医疗器械认证。</p></div>
+      </section>
+
+      <section class="method-card">
+        <div class="eyebrow">计算方法</div>
+        <ul>
+          <li>4R：偏航 + 三级共面俯仰</li>
+          <li>解析逆解，多俯仰与肘型候选搜索</li>
+          <li>3×4 位置雅可比 SVD 指标</li>
+          <li>关节插值路径逐点安全检查</li>
+        </ul>
+      </section>
+    </aside>
+  </main>
+
+  <footer>
+    <span>Feasibility prototype · SI units · local compute</span>
+    <span>不能替代真实人体接触安全验证</span>
+  </footer>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
+
