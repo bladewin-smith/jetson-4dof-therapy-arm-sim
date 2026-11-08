@@ -15,6 +15,7 @@ export const DEFAULT_CONFIG = Object.freeze({
     Object.freeze([-135, 135]),
     Object.freeze([-120, 120]),
   ]),
+  jointAxes: Object.freeze(["yaw", "pitch", "pitch", "pitch"]),
   directions: Object.freeze([1, 1, 1, 1]),
   safety: Object.freeze({
     minSingularValue: 0.025,
@@ -34,6 +35,7 @@ export function createConfig(overrides = {}) {
   return {
     links: { ...DEFAULT_CONFIG.links, ...(overrides.links || {}) },
     jointLimitsDeg: (overrides.jointLimitsDeg || DEFAULT_CONFIG.jointLimitsDeg).map((v) => [...v]),
+    jointAxes: [...(overrides.jointAxes || DEFAULT_CONFIG.jointAxes)],
     directions: [...(overrides.directions || DEFAULT_CONFIG.directions)],
     safety: { ...DEFAULT_CONFIG.safety, ...(overrides.safety || {}) },
     therapyZone: {
@@ -67,65 +69,88 @@ export function forwardKinematics(commandsDeg, config) {
   return forwardKinematicsModel(commandsToModelRad(commandsDeg, config), config);
 }
 
-export function forwardKinematicsModel(modelRad, config) {
-  const [q1, q2, q3, q4] = modelRad;
-  const { baseHeight: h, upperArm: l1, forearm: l2, tool: l3 } = config.links;
-  const a2 = q2;
-  const a3 = q2 + q3;
-  const a4 = q2 + q3 + q4;
-  const er = { x: Math.cos(q1), y: Math.sin(q1) };
+function multiplyMatrix3(a, b) {
+  return a.map((row) => [0, 1, 2].map((column) => row.reduce((sum, value, index) => sum + value * b[index][column], 0)));
+}
 
+function multiplyMatrixVector(matrix, vector) {
+  return matrix.map((row) => row.reduce((sum, value, index) => sum + value * vector[index], 0));
+}
+
+function rotationMatrix(axis, angle) {
+  const [x, y, z] = axis;
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const t = 1 - c;
+  return [
+    [t * x * x + c, t * x * y - s * z, t * x * z + s * y],
+    [t * x * y + s * z, t * y * y + c, t * y * z - s * x],
+    [t * x * z - s * y, t * y * z + s * x, t * z * z + c],
+  ];
+}
+
+function cross(a, b) {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
+function localAxis(type) {
+  return type === "yaw" ? [0, 0, 1] : [0, -1, 0];
+}
+
+export function forwardKinematicsModel(modelRad, config) {
+  const { baseHeight: h, upperArm: l1, forearm: l2, tool: l3 } = config.links;
   const shoulder = { x: 0, y: 0, z: h };
-  const elbow = {
-    x: l1 * Math.cos(a2) * er.x,
-    y: l1 * Math.cos(a2) * er.y,
-    z: h + l1 * Math.sin(a2),
-  };
-  const wrist = {
-    x: (l1 * Math.cos(a2) + l2 * Math.cos(a3)) * er.x,
-    y: (l1 * Math.cos(a2) + l2 * Math.cos(a3)) * er.y,
-    z: h + l1 * Math.sin(a2) + l2 * Math.sin(a3),
-  };
-  const radius = l1 * Math.cos(a2) + l2 * Math.cos(a3) + l3 * Math.cos(a4);
-  const end = {
-    x: radius * er.x,
-    y: radius * er.y,
-    z: h + l1 * Math.sin(a2) + l2 * Math.sin(a3) + l3 * Math.sin(a4),
-  };
+  const points = [{ x: 0, y: 0, z: 0 }, shoulder];
+  const jointOrigins = [];
+  const jointAxesWorld = [];
+  const linkLengths = [0, l1, l2, l3];
+  let position = [0, 0, h];
+  let orientation = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+
+  for (let index = 0; index < 4; index += 1) {
+    const axis = localAxis(config.jointAxes[index]);
+    jointOrigins.push([...position]);
+    jointAxesWorld.push(multiplyMatrixVector(orientation, axis));
+    orientation = multiplyMatrix3(orientation, rotationMatrix(axis, modelRad[index]));
+    const length = linkLengths[index];
+    if (length > EPS) {
+      const offset = multiplyMatrixVector(orientation, [length, 0, 0]);
+      position = position.map((value, axisIndex) => value + offset[axisIndex]);
+      points.push({ x: position[0], y: position[1], z: position[2] });
+    }
+  }
+
+  const end = { x: position[0], y: position[1], z: position[2] };
+  const toolDirection = multiplyMatrixVector(orientation, [1, 0, 0]);
 
   return {
     modelRad: [...modelRad],
     commandsDeg: modelRadToCommands(modelRad, config),
-    points: [{ x: 0, y: 0, z: 0 }, shoulder, elbow, wrist, end],
+    points,
+    jointOrigins,
+    jointAxesWorld,
+    orientation,
     pose: {
       ...end,
       radialDistance: Math.hypot(end.x, end.y),
-      yawDeg: radToDeg(q1),
-      pitchDeg: radToDeg(normalizeRad(a4)),
+      yawDeg: radToDeg(Math.atan2(toolDirection[1], toolDirection[0])),
+      pitchDeg: radToDeg(Math.atan2(toolDirection[2], Math.hypot(toolDirection[0], toolDirection[1]))),
     },
   };
 }
 
 export function positionJacobian(modelRad, config) {
-  const [q1, q2, q3, q4] = modelRad;
-  const { upperArm: l1, forearm: l2, tool: l3 } = config.links;
-  const a3 = q2 + q3;
-  const a4 = a3 + q4;
-  const r = l1 * Math.cos(q2) + l2 * Math.cos(a3) + l3 * Math.cos(a4);
-  const dr2 = -l1 * Math.sin(q2) - l2 * Math.sin(a3) - l3 * Math.sin(a4);
-  const dr3 = -l2 * Math.sin(a3) - l3 * Math.sin(a4);
-  const dr4 = -l3 * Math.sin(a4);
-  const dz2 = l1 * Math.cos(q2) + l2 * Math.cos(a3) + l3 * Math.cos(a4);
-  const dz3 = l2 * Math.cos(a3) + l3 * Math.cos(a4);
-  const dz4 = l3 * Math.cos(a4);
-  const c = Math.cos(q1);
-  const s = Math.sin(q1);
-
-  return [
-    [-r * s, dr2 * c, dr3 * c, dr4 * c],
-    [r * c, dr2 * s, dr3 * s, dr4 * s],
-    [0, dz2, dz3, dz4],
-  ];
+  const fk = forwardKinematicsModel(modelRad, config);
+  const end = [fk.pose.x, fk.pose.y, fk.pose.z];
+  const columns = fk.jointOrigins.map((origin, index) => {
+    const radius = end.map((value, axisIndex) => value - origin[axisIndex]);
+    return cross(fk.jointAxesWorld[index], radius);
+  });
+  return [0, 1, 2].map((row) => columns.map((column) => column[row]));
 }
 
 function multiplyByTranspose(matrix) {
@@ -275,7 +300,7 @@ export function evaluateJointPath(startCommandsDeg, endCommandsDeg, config, step
   };
 }
 
-export function solveInverse(target, config, options = {}) {
+function solveClassicInverse(target, config, options = {}) {
   const desiredPitchDeg = options.desiredPitchDeg ?? 0;
   const optimizePitch = options.optimizePitch ?? true;
   const currentCommandsDeg = options.currentCommandsDeg || [0, 0, 0, 0];
@@ -349,6 +374,153 @@ export function solveInverse(target, config, options = {}) {
   };
 }
 
+function invertMatrix3(matrix) {
+  const [[a, b, c], [d, e, f], [g, h, i]] = matrix;
+  const determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  if (Math.abs(determinant) < 1e-16) return null;
+  return [
+    [(e * i - f * h) / determinant, (c * h - b * i) / determinant, (b * f - c * e) / determinant],
+    [(f * g - d * i) / determinant, (a * i - c * g) / determinant, (c * d - a * f) / determinant],
+    [(d * h - e * g) / determinant, (b * g - a * h) / determinant, (a * e - b * d) / determinant],
+  ];
+}
+
+function targetError(target, fk) {
+  return [target.x - fk.pose.x, target.y - fk.pose.y, target.z - fk.pose.z];
+}
+
+function vectorNorm(vector) {
+  return Math.hypot(...vector);
+}
+
+function clampModelToLimits(modelRad, config) {
+  return modelRad.map((angle, index) => clamp(
+    angle,
+    degToRad(config.jointLimitsDeg[index][0]),
+    degToRad(config.jointLimitsDeg[index][1]),
+  ));
+}
+
+function solveDampedLeastSquares(target, seed, config) {
+  let modelRad = clampModelToLimits(seed, config);
+  let best = { modelRad: [...modelRad], residual: Infinity, iterations: 0 };
+  for (let iteration = 0; iteration < 180; iteration += 1) {
+    const fk = forwardKinematicsModel(modelRad, config);
+    const error = targetError(target, fk);
+    const residual = vectorNorm(error);
+    if (residual < best.residual) best = { modelRad: [...modelRad], residual, iterations: iteration };
+    if (residual < 5e-5) break;
+
+    const jacobian = positionJacobian(modelRad, config);
+    const normal = multiplyByTranspose(jacobian);
+    const damping = 0.012 + Math.min(0.055, residual * 0.08);
+    for (let axis = 0; axis < 3; axis += 1) normal[axis][axis] += damping ** 2;
+    const inverse = invertMatrix3(normal);
+    if (!inverse) break;
+    const taskStep = multiplyMatrixVector(inverse, error);
+    let delta = [0, 1, 2, 3].map((joint) => (
+      jacobian[0][joint] * taskStep[0]
+      + jacobian[1][joint] * taskStep[1]
+      + jacobian[2][joint] * taskStep[2]
+    ));
+    const deltaNorm = vectorNorm(delta);
+    if (deltaNorm > 0.28) delta = delta.map((value) => value * 0.28 / deltaNorm);
+
+    let accepted = false;
+    for (let lineSearch = 0; lineSearch < 6; lineSearch += 1) {
+      const scale = 0.9 / (2 ** lineSearch);
+      const candidate = clampModelToLimits(modelRad.map((value, index) => value + delta[index] * scale), config);
+      const candidateResidual = vectorNorm(targetError(target, forwardKinematicsModel(candidate, config)));
+      if (candidateResidual < residual - 1e-10) {
+        modelRad = candidate;
+        accepted = true;
+        break;
+      }
+    }
+    if (!accepted) break;
+  }
+  return best;
+}
+
+function numericSeeds(config, currentCommandsDeg, multiStart) {
+  const seeds = [commandsToModelRad(currentCommandsDeg, config)];
+  const center = config.jointLimitsDeg.map(([min, max]) => degToRad((min + max) / 2));
+  seeds.push(center);
+  if (multiStart) {
+    const bases = [2, 3, 5, 7];
+    for (let index = 1; index <= 46; index += 1) {
+      seeds.push(config.jointLimitsDeg.map(([min, max], joint) => (
+        degToRad(min + (max - min) * halton(index, bases[joint]))
+      )));
+    }
+  }
+  return seeds;
+}
+
+function solveNumericInverse(target, config, options = {}) {
+  const currentCommandsDeg = options.currentCommandsDeg || [0, 0, 0, 0];
+  const checkPath = options.checkPath ?? true;
+  const multiStart = options.optimizePitch ?? true;
+  const solutions = [];
+
+  for (const seed of numericSeeds(config, currentCommandsDeg, multiStart)) {
+    const result = solveDampedLeastSquares(target, seed, config);
+    if (result.residual > 8e-4) continue;
+    if (solutions.some((solution) => vectorNorm(solution.modelRad.map((value, index) => value - result.modelRad[index])) < 0.025)) continue;
+    const modelRad = result.modelRad;
+    const commandsDeg = modelRadToCommands(modelRad, config);
+    const safety = evaluateSafety(modelRad, config);
+    const path = checkPath ? evaluateJointPath(currentCommandsDeg, commandsDeg, config, 24) : null;
+    const movement = commandsDeg.reduce((sum, angle, index) => sum + Math.abs(angle - currentCommandsDeg[index]), 0);
+    const score = (
+      (path?.safe ? 5000 : 0)
+      + (safety.safe ? 2000 : 0)
+      + Math.min(safety.metrics.minSingularValue, 0.2) * 2000
+      + Math.min(safety.jointMarginDeg, 60) * 5
+      - movement * 0.35
+      - result.residual * 10000
+    );
+    solutions.push({
+      modelRad,
+      commandsDeg,
+      safety,
+      path,
+      score,
+      pitchDeg: safety.fk.pose.pitchDeg,
+      elbow: "numeric",
+      baseBranch: 0,
+      residual: result.residual,
+      iterations: result.iterations,
+      method: "numeric-dls",
+    });
+  }
+
+  solutions.sort((a, b) => b.score - a.score);
+  const safeSolutions = solutions.filter((solution) => solution.safety.safe && (!checkPath || solution.path?.safe));
+  return {
+    reachable: solutions.length > 0,
+    safeReachable: safeSolutions.length > 0,
+    chosen: safeSolutions[0] || solutions[0] || null,
+    solutions,
+    safeSolutionCount: safeSolutions.length,
+    method: "numeric-dls",
+  };
+}
+
+function usesClassicAxisLayout(config) {
+  return config.jointAxes.join(",") === "yaw,pitch,pitch,pitch";
+}
+
+export function solveInverse(target, config, options = {}) {
+  if (usesClassicAxisLayout(config)) {
+    const result = solveClassicInverse(target, config, options);
+    result.method = "analytic";
+    result.solutions.forEach((solution) => { solution.method = "analytic"; });
+    return result;
+  }
+  return solveNumericInverse(target, config, options);
+}
+
 function halton(index, base) {
   let result = 0;
   let fraction = 1 / base;
@@ -391,6 +563,7 @@ export function configurationSummary(config) {
   return {
     links: { ...config.links },
     jointLimitsDeg: config.jointLimitsDeg.map((limit) => [...limit]),
+    jointAxes: [...config.jointAxes],
     directions: [...config.directions],
     safety: { ...config.safety },
     therapyZone: {

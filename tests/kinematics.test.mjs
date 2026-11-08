@@ -6,6 +6,8 @@ import {
   evaluateJointPath,
   evaluateSafety,
   forwardKinematics,
+  forwardKinematicsModel,
+  positionJacobian,
   singularityMetrics,
   solveInverse,
 } from "../src/js/kinematics.js";
@@ -75,5 +77,42 @@ test("unreachable far target returns no solution", () => {
   const result = solveInverse({ x: 2, y: 0, z: 2 }, config, { optimizePitch: true, checkPath: false });
   assert.equal(result.reachable, false);
   assert.equal(result.chosen, null);
+});
+
+test("configurable joint-axis Jacobian matches finite differences", () => {
+  const config = createConfig({ jointAxes: ["yaw", "pitch", "yaw", "pitch"] });
+  const model = commandsToModelRad([18, 37, -42, 28], config);
+  const jacobian = positionJacobian(model, config);
+  const epsilon = 1e-6;
+  for (let joint = 0; joint < 4; joint += 1) {
+    const plus = [...model];
+    const minus = [...model];
+    plus[joint] += epsilon;
+    minus[joint] -= epsilon;
+    const a = forwardKinematicsModel(plus, config).pose;
+    const b = forwardKinematicsModel(minus, config).pose;
+    const numeric = [(a.x - b.x), (a.y - b.y), (a.z - b.z)].map((value) => value / (2 * epsilon));
+    for (let axis = 0; axis < 3; axis += 1) close(jacobian[axis][joint], numeric[axis], 2e-6);
+  }
+});
+
+test("numeric IK solves a mixed yaw-pitch axis layout", () => {
+  const config = createConfig({ jointAxes: ["yaw", "pitch", "yaw", "pitch"] });
+  const target = forwardKinematics([25, 35, -55, 40], config).pose;
+  const result = solveInverse(target, config, {
+    currentCommandsDeg: [0, 20, -40, 10],
+    optimizePitch: true,
+    checkPath: false,
+  });
+  assert.equal(result.method, "numeric-dls");
+  assert.equal(result.reachable, true);
+  assert.ok(result.chosen.residual < 8e-4);
+});
+
+test("all-yaw layout is correctly classified as position-rank deficient", () => {
+  const config = createConfig({ jointAxes: ["yaw", "yaw", "yaw", "yaw"] });
+  const safety = evaluateSafety(commandsToModelRad([20, -30, 45, 15], config), config);
+  assert.equal(safety.singularitySafe, false);
+  assert.ok(safety.metrics.minSingularValue < 1e-8);
 });
 

@@ -27,27 +27,28 @@
     <aside class="control-panel" aria-label="机械臂参数控制">
       <section class="panel-section intro-section">
         <div class="eyebrow">关节控制</div>
-        <h2>电机指令与旋向</h2>
-        <p>滑块是电机命令角。切换旋向后，数学关节角 = 命令角 × 方向。</p>
+        <h2>关节轴类型、电机指令与旋向</h2>
+        <p>每个关节可独立设为偏航或俯仰；轴定义在该关节的局部坐标系中。</p>
       </section>
 
       <section class="joint-list">
         <article class="joint-card">
-          <div class="joint-title"><span><b>J1</b> 底座偏航</span><button data-direction="0" type="button"></button></div>
+          <div class="joint-title"><span><b>J1</b> 关节 1</span><div class="joint-options"><select data-axis="0" aria-label="J1 旋转轴"><option value="yaw">偏航 Yaw</option><option value="pitch">俯仰 Pitch</option></select><button data-direction="0" type="button"></button></div></div>
           <div class="joint-input"><input id="q1" type="range" min="-170" max="170" step="0.5"><input id="q1-value" type="number" min="-170" max="170" step="0.5"><span>°</span></div>
         </article>
         <article class="joint-card">
-          <div class="joint-title"><span><b>J2</b> 肩部俯仰</span><button data-direction="1" type="button"></button></div>
+          <div class="joint-title"><span><b>J2</b> 关节 2</span><div class="joint-options"><select data-axis="1" aria-label="J2 旋转轴"><option value="yaw">偏航 Yaw</option><option value="pitch">俯仰 Pitch</option></select><button data-direction="1" type="button"></button></div></div>
           <div class="joint-input"><input id="q2" type="range" min="-75" max="105" step="0.5"><input id="q2-value" type="number" min="-75" max="105" step="0.5"><span>°</span></div>
         </article>
         <article class="joint-card">
-          <div class="joint-title"><span><b>J3</b> 肘部俯仰</span><button data-direction="2" type="button"></button></div>
+          <div class="joint-title"><span><b>J3</b> 关节 3</span><div class="joint-options"><select data-axis="2" aria-label="J3 旋转轴"><option value="yaw">偏航 Yaw</option><option value="pitch">俯仰 Pitch</option></select><button data-direction="2" type="button"></button></div></div>
           <div class="joint-input"><input id="q3" type="range" min="-135" max="135" step="0.5"><input id="q3-value" type="number" min="-135" max="135" step="0.5"><span>°</span></div>
         </article>
         <article class="joint-card">
-          <div class="joint-title"><span><b>J4</b> 腕部俯仰</span><button data-direction="3" type="button"></button></div>
+          <div class="joint-title"><span><b>J4</b> 关节 4</span><div class="joint-options"><select data-axis="3" aria-label="J4 旋转轴"><option value="yaw">偏航 Yaw</option><option value="pitch">俯仰 Pitch</option></select><button data-direction="3" type="button"></button></div></div>
           <div class="joint-input"><input id="q4" type="range" min="-120" max="120" step="0.5"><input id="q4-value" type="number" min="-120" max="120" step="0.5"><span>°</span></div>
         </article>
+        <p class="axis-note">偏航 = 局部 Z 轴；俯仰 = 局部 −Y 轴。J1/J2 位于同一肩部原点，随后依次连接 L1、L2、L3。</p>
       </section>
 
       <details class="config-panel">
@@ -92,8 +93,7 @@
           <label>Y / m<input id="target-y" type="number" value="0.12" min="-0.8" max="0.8" step="0.01"></label>
           <label>Z / m<input id="target-z" type="number" value="0.38" min="0" max="1" step="0.01"></label>
         </div>
-        <label class="pitch-row"><span>期望工具俯仰</span><span><input id="target-pitch" type="number" value="-10" min="-180" max="180" step="1"> °</span></label>
-        <label class="check-row"><input id="auto-pitch" type="checkbox" checked><span>允许冗余自由度自动优化俯仰，避开奇异点</span></label>
+        <label class="check-row"><input id="multi-start" type="checkbox" checked><span>使用多初值搜索冗余构型，优先寻找远离奇异点的解</span></label>
         <button id="solve-ik" class="button primary wide" type="submit">求解并移动到目标</button>
       </form>
 
@@ -159,8 +159,8 @@
       <section class="method-card">
         <div class="eyebrow">计算方法</div>
         <ul>
-          <li>4R：偏航 + 三级共面俯仰</li>
-          <li>解析逆解，多俯仰与肘型候选搜索</li>
+          <li>4R：每个局部关节轴可选偏航/俯仰</li>
+          <li>经典构型解析逆解，任意轴组合采用数值 DLS</li>
           <li>3×4 位置雅可比 SVD 指标</li>
           <li>关节插值路径逐点安全检查</li>
         </ul>

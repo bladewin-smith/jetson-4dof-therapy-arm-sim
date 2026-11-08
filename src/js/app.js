@@ -44,6 +44,12 @@ function updateDirectionButtons() {
   });
 }
 
+function updateAxisSelectors() {
+  $$('[data-axis]').forEach((select) => {
+    select.value = state.config.jointAxes[Number(select.dataset.axis)];
+  });
+}
+
 function updateJointControls() {
   state.commands.forEach((value, index) => {
     const range = $(`#q${index + 1}`);
@@ -142,6 +148,7 @@ function applyConfiguration() {
   state.config = createConfig({
     links: values.links,
     jointLimitsDeg: values.jointLimitsDeg,
+    jointAxes: state.config.jointAxes,
     directions: state.config.directions,
     therapyZone: values.therapyZone,
     safety: { ...state.config.safety, ...values.safety },
@@ -214,6 +221,17 @@ function bindJointInputs() {
       render();
     });
   });
+  $$("[data-axis]").forEach((select) => {
+    select.addEventListener("change", () => {
+      const index = Number(select.dataset.axis);
+      state.config.jointAxes[index] = select.value;
+      state.workspace = sampleWorkspace(state.config, 1200);
+      state.lastIK = null;
+      state.scanResult = null;
+      $("#coverage-card").hidden = true;
+      render();
+    });
+  });
 }
 
 function readTarget() {
@@ -226,10 +244,8 @@ function readTarget() {
 
 function solveTarget() {
   readTarget();
-  const desiredPitchDeg = Number($("#target-pitch").value);
-  const optimizePitch = $("#auto-pitch").checked;
+  const optimizePitch = $("#multi-start").checked;
   const result = solveInverse(state.target, state.config, {
-    desiredPitchDeg,
     optimizePitch,
     currentCommandsDeg: state.commands,
     checkPath: true,
@@ -237,8 +253,8 @@ function solveTarget() {
   state.lastIK = result;
 
   if (!result.reachable) {
-    setStatus("danger", "目标不可达", "在当前连杆长度、关节限位和末端俯仰策略下没有逆解");
     render();
+    setStatus("danger", "目标不可达", "当前关节轴组合、连杆长度和关节限位下没有收敛的逆解");
     return;
   }
 
@@ -247,7 +263,8 @@ function solveTarget() {
   updateJointControls();
   render();
   if (result.safeReachable) {
-    setStatus("safe", "已找到安全逆解与插值路径", `${result.safeSolutionCount} 个候选通过；自动俯仰 ${format(chosen.pitchDeg, 1)}°；${chosen.elbow === "up" ? "肘上" : "肘下"}构型`);
+    const method = result.method === "analytic" ? "经典构型解析搜索" : "任意轴数值 DLS";
+    setStatus("safe", "已找到安全逆解与插值路径", `${method}；${result.safeSolutionCount} 个候选通过；残差 ${format(chosen.residual * 1000, 2)} mm`);
   } else {
     setStatus("warn", "仅找到带风险的几何逆解", chosen.safety.reasons.join(" · ") || "关节插值路径穿过风险区");
   }
@@ -272,7 +289,6 @@ async function scanTherapyZone() {
           z: zone.z[0] + (zone.z[1] - zone.z[0]) * iz / (nz - 1),
         };
         const result = solveInverse(target, state.config, {
-          desiredPitchDeg: 0,
           optimizePitch: true,
           currentCommandsDeg: state.commands,
           checkPath: false,
@@ -330,10 +346,11 @@ function reset() {
   $("#target-x").value = state.target.x;
   $("#target-y").value = state.target.y;
   $("#target-z").value = state.target.z;
-  $("#target-pitch").value = -10;
+  $("#multi-start").checked = true;
   $("#coverage-card").hidden = true;
   state.workspace = sampleWorkspace(state.config, 1200);
   populateConfigInputs();
+  updateAxisSelectors();
   updateDirectionButtons();
   updateJointControls();
   render();
@@ -349,6 +366,7 @@ $("#target-form").addEventListener("submit", (event) => { event.preventDefault()
 
 state.workspace = sampleWorkspace(state.config, 1200);
 populateConfigInputs();
+updateAxisSelectors();
 updateDirectionButtons();
 updateJointControls();
 render();
