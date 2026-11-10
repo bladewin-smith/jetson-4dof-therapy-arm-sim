@@ -35,7 +35,7 @@ test("motor direction changes command-to-model mapping", () => {
   close(model[3] * 180 / Math.PI, -40);
 });
 
-test("analytic IK reproduces FK targets for both position and pitch", () => {
+test("analytic IK reproduces FK targets with the fixed terminal-yaw joint", () => {
   const config = createConfig();
   const seeds = [
     [20, 30, -70, 25],
@@ -113,11 +113,22 @@ test("numeric IK solves a mixed yaw-pitch axis layout", () => {
   assert.ok(result.chosen.residual < 8e-4);
 });
 
-test("all-pitch layout remains position-rank deficient with the lift axis", () => {
+test("J4 is forced to world-yaw and rotates only the horizontal terminal link", () => {
   const config = createConfig({ jointAxes: ["pitch", "pitch", "pitch", "pitch"] });
-  const safety = evaluateSafety(commandsToModelRad([20, -30, 45, 15], config), config);
-  assert.equal(safety.singularitySafe, false);
-  assert.ok(safety.metrics.minSingularValue < 1e-8);
+  assert.equal(config.jointAxes[3], "yaw");
+  const a = forwardKinematics([20, -30, 45, 0], config);
+  const b = forwardKinematics([20, -30, 45, 90], config);
+  close(a.wrist[0], b.wrist[0]);
+  close(a.wrist[1], b.wrist[1]);
+  close(a.wrist[2], b.wrist[2]);
+  close(a.pose.z, b.pose.z);
+  close(a.terminalOffset[0], config.links.terminal);
+  close(a.terminalOffset[1], 0);
+  close(b.terminalOffset[0], 0);
+  close(b.terminalOffset[1], config.links.terminal);
+  close(a.terminalOffset[2], 0);
+  close(b.terminalOffset[2], 0);
+  close(b.pose.yawDeg, 90);
 });
 
 test("lift axis translates the full arm and contributes a Z Jacobian column", () => {

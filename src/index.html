@@ -28,7 +28,7 @@
       <section class="panel-section intro-section">
         <div class="eyebrow">关节控制</div>
         <h2>关节轴类型、电机指令与旋向</h2>
-        <p>每个关节可独立设为偏航或俯仰；轴定义在该关节的局部坐标系中。</p>
+        <p>J1–J3 可独立设为偏航或俯仰；J4 固定为世界 Z 轴偏航，用于旋转末端 L4。</p>
       </section>
 
       <section class="joint-list">
@@ -49,10 +49,10 @@
           <div class="joint-input"><input id="q3" type="range" min="-135" max="135" step="0.5"><input id="q3-value" type="number" min="-135" max="135" step="0.5"><span>°</span></div>
         </article>
         <article class="joint-card">
-          <div class="joint-title"><span><b>J4</b> 关节 4</span><div class="joint-options"><select data-axis="3" aria-label="J4 旋转轴"><option value="yaw">偏航 Yaw</option><option value="pitch">俯仰 Pitch</option></select><button data-direction="3" type="button"></button></div></div>
+          <div class="joint-title"><span><b>J4</b> 末端偏航</span><div class="joint-options"><span class="axis-badge">固定世界 Z</span><button data-direction="3" type="button"></button></div></div>
           <div class="joint-input"><input id="q4" type="range" min="-120" max="120" step="0.5"><input id="q4-value" type="number" min="-120" max="120" step="0.5"><span>°</span></div>
         </article>
-        <p class="axis-note">P1 沿世界 Z 轴升降。偏航 = 局部 Z 轴；俯仰 = 局部 −Y 轴。J1/J2 位于滑台肩部原点，末端竖直段保持与导轨平行。</p>
+        <p class="axis-note">P1 沿世界 Z 轴升降。J1–J3 使用局部轴；J4 电机位于天蓝色竖直段顶部，轴线与竖直段同轴，通过它控制土黄色 L4 在水平面旋转。</p>
       </section>
 
       <details class="config-panel">
@@ -172,7 +172,7 @@
       <section class="method-card">
         <div class="eyebrow">计算方法</div>
         <ul>
-          <li>P1 + 4R：升降轴加四个可配置旋转轴</li>
+          <li>P1 + 3R 可配置轴 + J4 固定世界偏航</li>
           <li>经典构型解析逆解，任意轴组合采用数值 DLS</li>
           <li>世界 Z 对齐竖直末端 + 新增 L4 末端连杆</li>
           <li>3×5 位置雅可比 SVD 指标</li>
