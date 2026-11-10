@@ -17,7 +17,7 @@ const format = (value, digits = 3) => Number.isFinite(value) ? value.toFixed(dig
 
 const state = {
   config: createConfig(),
-  commands: [0, 60, -100, 40],
+  commands: [15, 20, -60, 20],
   target: { x: 0.46, y: 0.12, z: 0.38 },
   workspace: [],
   lastIK: null,
@@ -299,10 +299,10 @@ function readTarget() {
 
 function solveTarget() {
   readTarget();
-  const optimizePitch = $("#multi-start").checked;
+  const multiStart = $("#multi-start").checked;
   const optimizeSlide = $("#auto-slide").checked;
   const result = solveInverse(state.target, state.config, {
-    optimizePitch,
+    multiStart,
     optimizeSlide,
     currentCommandsDeg: state.commands,
     checkPath: true,
@@ -322,7 +322,7 @@ function solveTarget() {
   updateJointControls();
   render();
   if (result.safeReachable) {
-    const method = result.method.startsWith("analytic") ? "经典构型解析搜索" : "任意轴数值 DLS";
+    const method = "多初值数值 DLS";
     setStatus("safe", "已找到安全逆解与插值路径", `${method}；P1 ${format(chosen.slidePosition, 3)} m；${result.safeSolutionCount} 个候选通过；残差 ${format(chosen.residual * 1000, 2)} mm`);
   } else {
     setStatus("warn", "仅找到带风险的几何逆解", chosen.safety.reasons.join(" · ") || "关节插值路径穿过风险区");
@@ -348,7 +348,7 @@ async function scanTherapyZone() {
           z: zone.z[0] + (zone.z[1] - zone.z[0]) * iz / (nz - 1),
         };
         const result = solveInverse(target, state.config, {
-          optimizePitch: true,
+          multiStart: true,
           optimizeSlide: true,
           currentCommandsDeg: state.commands,
           checkPath: false,
@@ -399,7 +399,7 @@ function exportReport() {
 
 function reset() {
   state.config = createConfig();
-  state.commands = [0, 60, -100, 40];
+  state.commands = [15, 20, -60, 20];
   state.target = { x: 0.46, y: 0.12, z: 0.38 };
   state.lastIK = null;
   state.scanResult = null;

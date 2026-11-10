@@ -24,7 +24,7 @@ export const DEFAULT_CONFIG = Object.freeze({
     Object.freeze([-135, 135]),
     Object.freeze([-120, 120]),
   ]),
-  jointAxes: Object.freeze(["yaw", "pitch", "pitch", "yaw"]),
+  jointAxes: Object.freeze(["yaw", "pitch", "yaw", "pitch"]),
   directions: Object.freeze([1, 1, 1, 1]),
   safety: Object.freeze({
     minSingularValue: 0.025,
@@ -42,7 +42,8 @@ export const DEFAULT_CONFIG = Object.freeze({
 
 export function createConfig(overrides = {}) {
   const jointAxes = [...(overrides.jointAxes || DEFAULT_CONFIG.jointAxes)];
-  jointAxes[3] = "yaw";
+  jointAxes[2] = "yaw";
+  jointAxes[3] = "pitch";
   return {
     links: { ...DEFAULT_CONFIG.links, ...(overrides.links || {}) },
     linearAxis: { ...DEFAULT_CONFIG.linearAxis, ...(overrides.linearAxis || {}) },
@@ -144,22 +145,18 @@ export function forwardKinematicsModel(modelRad, config) {
 
   const wrist = [...position];
   jointOrigins.push([...wrist]);
-  jointAxesWorld.push([0, 0, 1]);
+  const terminalPitchAxis = localAxis("pitch");
+  jointAxesWorld.push(multiplyMatrixVector(orientation, terminalPitchAxis));
+  orientation = multiplyMatrix3(orientation, rotationMatrix(terminalPitchAxis, modelRad[3]));
   const verticalOffset = [0, 0, config.toolAssembly.verticalDirection * verticalLength];
   position = position.map((value, index) => value + verticalOffset[index]);
   points.push({ x: position[0], y: position[1], z: position[2] });
-  const terminalYaw = modelRad[3];
-  const terminalOffset = [
-    terminalLength * Math.cos(terminalYaw),
-    terminalLength * Math.sin(terminalYaw),
-    0,
-  ];
+  const terminalOffset = multiplyMatrixVector(orientation, [terminalLength, 0, 0]);
   position = position.map((value, index) => value + terminalOffset[index]);
   points.push({ x: position[0], y: position[1], z: position[2] });
 
   const end = { x: position[0], y: position[1], z: position[2] };
-  const toolDirection = [Math.cos(terminalYaw), Math.sin(terminalYaw), 0];
-  const toolOrientation = rotationMatrix([0, 0, 1], terminalYaw);
+  const toolDirection = multiplyMatrixVector(orientation, [1, 0, 0]);
 
   return {
     modelRad: [...modelRad],
@@ -170,7 +167,7 @@ export function forwardKinematicsModel(modelRad, config) {
     wrist,
     terminalOffset,
     verticalOffset,
-    orientation: toolOrientation,
+    orientation,
     pose: {
       ...end,
       radialDistance: Math.hypot(end.x, end.y),
@@ -186,9 +183,7 @@ export function positionJacobian(modelRad, config) {
     const wristContribution = index < 3
       ? cross(fk.jointAxesWorld[index], fk.wrist.map((value, axisIndex) => value - origin[axisIndex]))
       : [0, 0, 0];
-    const terminalContribution = index === 3
-      ? cross(fk.jointAxesWorld[index], fk.terminalOffset)
-      : [0, 0, 0];
+    const terminalContribution = cross(fk.jointAxesWorld[index], fk.terminalOffset);
     return wristContribution.map((value, axisIndex) => value + terminalContribution[axisIndex]);
   });
   const allColumns = [[0, 0, 1], ...columns];
@@ -307,26 +302,6 @@ export function evaluateSafety(modelRad, config) {
   };
 }
 
-function angleCandidates(preferredDeg, optimize) {
-  if (!optimize) return [preferredDeg];
-  const result = [preferredDeg];
-  for (let offset = 5; offset <= 180; offset += 5) {
-    if (preferredDeg - offset >= -180) result.push(preferredDeg - offset);
-    if (preferredDeg + offset <= 180) result.push(preferredDeg + offset);
-  }
-  return result;
-}
-
-function limitEquivalentAngle(angleRad, limitDeg) {
-  const candidates = [angleRad, angleRad + 2 * Math.PI, angleRad - 2 * Math.PI];
-  const feasible = candidates.filter((candidate) => {
-    const deg = radToDeg(candidate);
-    return deg >= limitDeg[0] - 1e-8 && deg <= limitDeg[1] + 1e-8;
-  });
-  if (feasible.length) return feasible.sort((a, b) => Math.abs(a) - Math.abs(b))[0];
-  return normalizeRad(angleRad);
-}
-
 export function evaluateJointPath(startCommandsDeg, endCommandsDeg, config, steps = 36, linearAxisRange = null) {
   let minimumSigma = Infinity;
   let maximumCondition = 0;
@@ -362,82 +337,6 @@ export function evaluateJointPath(startCommandsDeg, endCommandsDeg, config, step
     maximumCondition,
     minimumMargin,
     samples,
-  };
-}
-
-function solveClassicInverse(target, config, options = {}) {
-  const currentCommandsDeg = options.currentCommandsDeg || [0, 0, 0, 0];
-  const checkPath = options.checkPath ?? true;
-  const optimizeYaw = options.optimizePitch ?? true;
-  const { upperArm: l1, forearm: l2, tool: verticalLength, terminal: l4 } = config.links;
-  const h = shoulderHeight(config) + config.toolAssembly.verticalDirection * verticalLength;
-  const preferredYawDeg = currentCommandsDeg[3] * config.directions[3];
-  const solutions = [];
-
-  for (const terminalYawDeg of angleCandidates(preferredYawDeg, optimizeYaw)) {
-    const q4 = limitEquivalentAngle(degToRad(terminalYawDeg), config.jointLimitsDeg[3]);
-    const wristX = target.x - l4 * Math.cos(q4);
-    const wristY = target.y - l4 * Math.sin(q4);
-    const targetRadius = Math.hypot(wristX, wristY);
-    const baseYaw = Math.atan2(wristY, wristX);
-    const wristZ = target.z - h;
-    for (const radialSign of [1, -1]) {
-      const q1Raw = radialSign === 1 ? baseYaw : normalizeRad(baseYaw + Math.PI);
-      const q1 = limitEquivalentAngle(q1Raw, config.jointLimitsDeg[0]);
-      const signedRadius = targetRadius * radialSign;
-      const cosineElbow = (signedRadius ** 2 + wristZ ** 2 - l1 ** 2 - l2 ** 2) / (2 * l1 * l2);
-      if (cosineElbow < -1 - 1e-8 || cosineElbow > 1 + 1e-8) continue;
-      const elbowMagnitude = Math.acos(clamp(cosineElbow, -1, 1));
-
-      for (const elbowSign of [1, -1]) {
-        const q3 = elbowMagnitude * elbowSign;
-        const q2 = Math.atan2(wristZ, signedRadius) - Math.atan2(l2 * Math.sin(q3), l1 + l2 * Math.cos(q3));
-        const raw = [q1, q2, q3, q4];
-        const modelRad = raw.map((angle, index) => limitEquivalentAngle(angle, config.jointLimitsDeg[index]));
-        const commandsDeg = modelRadToCommands(modelRad, config);
-        const safety = evaluateSafety(modelRad, config);
-        if (!safety.withinLimits) continue;
-        const residual = Math.hypot(
-          safety.fk.pose.x - target.x,
-          safety.fk.pose.y - target.y,
-          safety.fk.pose.z - target.z,
-        );
-        if (residual > 1e-5) continue;
-        const path = checkPath ? evaluateJointPath(currentCommandsDeg, commandsDeg, config, 24) : null;
-        const movement = commandsDeg.reduce((sum, angle, index) => sum + Math.abs(angle - currentCommandsDeg[index]), 0);
-        const yawMovement = Math.abs(commandsDeg[3] - currentCommandsDeg[3]);
-        const score = (
-          (path?.safe ? 5000 : 0)
-          + (safety.safe ? 2000 : 0)
-          + Math.min(safety.metrics.minSingularValue, 0.2) * 2000
-          + Math.min(safety.jointMarginDeg, 60) * 5
-          - movement * 0.35
-          - yawMovement * 0.12
-        );
-        solutions.push({
-          modelRad,
-          commandsDeg,
-          safety,
-          path,
-          score,
-          pitchDeg: 0,
-          terminalYawDeg: radToDeg(normalizeRad(q4)),
-          elbow: elbowSign > 0 ? "down" : "up",
-          baseBranch: radialSign,
-          residual,
-        });
-      }
-    }
-  }
-
-  solutions.sort((a, b) => b.score - a.score);
-  const safeSolutions = solutions.filter((solution) => solution.safety.safe && (!checkPath || solution.path?.safe));
-  return {
-    reachable: solutions.length > 0,
-    safeReachable: safeSolutions.length > 0,
-    chosen: safeSolutions[0] || solutions[0] || null,
-    solutions,
-    safeSolutionCount: safeSolutions.length,
   };
 }
 
@@ -527,7 +426,7 @@ function numericSeeds(config, currentCommandsDeg, multiStart) {
 function solveNumericInverse(target, config, options = {}) {
   const currentCommandsDeg = options.currentCommandsDeg || [0, 0, 0, 0];
   const checkPath = options.checkPath ?? true;
-  const multiStart = options.optimizePitch ?? true;
+  const multiStart = options.multiStart ?? options.optimizePitch ?? true;
   const solutions = [];
 
   for (const seed of numericSeeds(config, currentCommandsDeg, multiStart)) {
@@ -574,17 +473,7 @@ function solveNumericInverse(target, config, options = {}) {
   };
 }
 
-function usesClassicAxisLayout(config) {
-  return config.jointAxes.join(",") === "yaw,pitch,pitch,yaw";
-}
-
 function solveInverseAtFixedSlide(target, config, options = {}) {
-  if (usesClassicAxisLayout(config)) {
-    const result = solveClassicInverse(target, config, options);
-    result.method = "analytic";
-    result.solutions.forEach((solution) => { solution.method = "analytic"; });
-    return result;
-  }
   return solveNumericInverse(target, config, options);
 }
 
@@ -637,7 +526,7 @@ export function solveInverse(target, config, options = {}) {
     chosen: safeSolutions[0] || solutions[0] || null,
     solutions,
     safeSolutionCount: safeSolutions.length,
-    method: usesClassicAxisLayout(config) ? "analytic+linear-search" : "numeric-dls+linear-search",
+    method: "numeric-dls+linear-search",
   };
 }
 

@@ -35,7 +35,7 @@ test("motor direction changes command-to-model mapping", () => {
   close(model[3] * 180 / Math.PI, -40);
 });
 
-test("analytic IK reproduces FK targets with the fixed terminal-yaw joint", () => {
+test("numeric IK reproduces FK targets with fixed J3 yaw and J4 pitch", () => {
   const config = createConfig();
   const seeds = [
     [20, 30, -70, 25],
@@ -45,8 +45,7 @@ test("analytic IK reproduces FK targets with the fixed terminal-yaw joint", () =
   for (const commands of seeds) {
     const fk = forwardKinematics(commands, config);
     const result = solveInverse(fk.pose, config, {
-      desiredPitchDeg: fk.pose.pitchDeg,
-      optimizePitch: false,
+      multiStart: false,
       currentCommandsDeg: commands,
       checkPath: false,
     });
@@ -78,7 +77,7 @@ test("joint interpolation path reports aggregate metrics", () => {
 
 test("unreachable far target returns no solution", () => {
   const config = createConfig();
-  const result = solveInverse({ x: 2, y: 0, z: 2 }, config, { optimizePitch: true, checkPath: false });
+  const result = solveInverse({ x: 2, y: 0, z: 2 }, config, { multiStart: true, checkPath: false });
   assert.equal(result.reachable, false);
   assert.equal(result.chosen, null);
 });
@@ -105,7 +104,7 @@ test("numeric IK solves a mixed yaw-pitch axis layout", () => {
   const target = forwardKinematics([25, 35, -55, 40], config).pose;
   const result = solveInverse(target, config, {
     currentCommandsDeg: [0, 20, -40, 10],
-    optimizePitch: true,
+    multiStart: true,
     checkPath: false,
   });
   assert.equal(result.method, "numeric-dls");
@@ -113,22 +112,26 @@ test("numeric IK solves a mixed yaw-pitch axis layout", () => {
   assert.ok(result.chosen.residual < 8e-4);
 });
 
-test("J4 is forced to world-yaw and rotates only the horizontal terminal link", () => {
-  const config = createConfig({ jointAxes: ["pitch", "pitch", "pitch", "pitch"] });
-  assert.equal(config.jointAxes[3], "yaw");
-  const a = forwardKinematics([20, -30, 45, 0], config);
-  const b = forwardKinematics([20, -30, 45, 90], config);
-  close(a.wrist[0], b.wrist[0]);
-  close(a.wrist[1], b.wrist[1]);
-  close(a.wrist[2], b.wrist[2]);
-  close(a.pose.z, b.pose.z);
-  close(a.terminalOffset[0], config.links.terminal);
-  close(a.terminalOffset[1], 0);
-  close(b.terminalOffset[0], 0);
-  close(b.terminalOffset[1], config.links.terminal);
-  close(a.terminalOffset[2], 0);
-  close(b.terminalOffset[2], 0);
-  close(b.pose.yawDeg, 90);
+test("J3 is forced to yaw above the fixed-pitch J4 node", () => {
+  const config = createConfig({ jointAxes: ["pitch", "pitch", "pitch", "yaw"] });
+  assert.deepEqual(config.jointAxes, ["pitch", "pitch", "yaw", "pitch"]);
+  const neutral = forwardKinematics([20, -30, 0, 0], config);
+  const yawed = forwardKinematics([20, -30, 90, 0], config);
+  const pitched = forwardKinematics([20, -30, 90, 90], config);
+
+  close(neutral.jointOrigins[2][0], yawed.jointOrigins[2][0]);
+  close(neutral.jointOrigins[2][1], yawed.jointOrigins[2][1]);
+  close(neutral.jointOrigins[2][2], yawed.jointOrigins[2][2]);
+  assert.ok(Math.hypot(...neutral.wrist.map((value, index) => value - yawed.wrist[index])) > 0.1);
+
+  close(yawed.wrist[0], pitched.wrist[0]);
+  close(yawed.wrist[1], pitched.wrist[1]);
+  close(yawed.wrist[2], pitched.wrist[2]);
+  close(yawed.points.at(-2).x, pitched.points.at(-2).x);
+  close(yawed.points.at(-2).y, pitched.points.at(-2).y);
+  close(yawed.points.at(-2).z, pitched.points.at(-2).z);
+  close(Math.hypot(...pitched.terminalOffset), config.links.terminal);
+  assert.ok(Math.abs(yawed.pose.z - pitched.pose.z) > 0.05);
 });
 
 test("lift axis translates the full arm and contributes a Z Jacobian column", () => {
@@ -160,14 +163,14 @@ test("IK can search the lift-axis travel for a high target", () => {
   const config = createConfig({ linearAxis: { position: 0 } });
   const result = solveInverse({ x: 0.2, y: 0, z: 0.9 }, config, {
     currentCommandsDeg: [0, 20, -40, 20],
-    optimizePitch: true,
+    multiStart: true,
     optimizeSlide: true,
     checkPath: true,
   });
   assert.equal(result.reachable, true);
   assert.equal(result.safeReachable, true);
   assert.ok(result.chosen.slidePosition > 0);
-  assert.ok(result.chosen.residual < 1e-5);
+  assert.ok(result.chosen.residual < 5e-5);
   assert.equal(result.chosen.path.safe, true);
 });
 
