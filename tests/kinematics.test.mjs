@@ -13,6 +13,7 @@ import {
 } from "../src/js/kinematics.js";
 
 const close = (actual, expected, tolerance = 1e-8) => assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`);
+const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 
 test("zero pose follows the positive X axis", () => {
   const config = createConfig();
@@ -33,6 +34,23 @@ test("motor direction changes command-to-model mapping", () => {
   close(model[1] * 180 / Math.PI, -20);
   close(model[2] * 180 / Math.PI, -30);
   close(model[3] * 180 / Math.PI, -40);
+});
+
+test("four joint origins follow the requested serial link topology", () => {
+  const config = createConfig();
+  const fk = forwardKinematics([18, 32, -47, 26], config);
+  assert.equal(fk.points.length, 6);
+  assert.equal(fk.jointOrigins.length, 4);
+
+  for (let joint = 0; joint < 4; joint += 1) {
+    close(fk.jointOrigins[joint][0], fk.points[joint + 1].x);
+    close(fk.jointOrigins[joint][1], fk.points[joint + 1].y);
+    close(fk.jointOrigins[joint][2], fk.points[joint + 1].z);
+  }
+  close(distance(fk.points[1], fk.points[2]), config.links.upperArm);
+  close(distance(fk.points[2], fk.points[3]), config.links.forearm);
+  close(distance(fk.points[3], fk.points[4]), config.links.tool);
+  close(distance(fk.points[4], fk.points[5]), config.links.terminal);
 });
 
 test("numeric IK reproduces FK targets with fixed J3 yaw and J4 pitch", () => {
@@ -112,21 +130,23 @@ test("numeric IK solves a mixed yaw-pitch axis layout", () => {
   assert.ok(result.chosen.residual < 8e-4);
 });
 
-test("J3 is forced to yaw above the fixed-pitch J4 node", () => {
+test("J3 yaw is at the vertical-link top and J4 pitch is at its bottom", () => {
   const config = createConfig({ jointAxes: ["pitch", "pitch", "pitch", "yaw"] });
   assert.deepEqual(config.jointAxes, ["pitch", "pitch", "yaw", "pitch"]);
   const neutral = forwardKinematics([20, -30, 0, 0], config);
   const yawed = forwardKinematics([20, -30, 90, 0], config);
   const pitched = forwardKinematics([20, -30, 90, 90], config);
 
-  close(neutral.jointOrigins[2][0], yawed.jointOrigins[2][0]);
-  close(neutral.jointOrigins[2][1], yawed.jointOrigins[2][1]);
-  close(neutral.jointOrigins[2][2], yawed.jointOrigins[2][2]);
-  assert.ok(Math.hypot(...neutral.wrist.map((value, index) => value - yawed.wrist[index])) > 0.1);
-
-  close(yawed.wrist[0], pitched.wrist[0]);
-  close(yawed.wrist[1], pitched.wrist[1]);
-  close(yawed.wrist[2], pitched.wrist[2]);
+  for (let axis = 0; axis < 3; axis += 1) {
+    close(neutral.jointOrigins[2][axis], yawed.jointOrigins[2][axis]);
+    close(neutral.jointOrigins[3][axis], yawed.jointOrigins[3][axis]);
+    close(yawed.jointOrigins[3][axis], pitched.jointOrigins[3][axis]);
+  }
+  assert.deepEqual(yawed.jointAxesWorld[2], [0, 0, 1]);
+  close(neutral.terminalOffset[0], config.links.terminal);
+  close(neutral.terminalOffset[1], 0);
+  close(yawed.terminalOffset[0], 0);
+  close(yawed.terminalOffset[1], config.links.terminal);
   close(yawed.points.at(-2).x, pitched.points.at(-2).x);
   close(yawed.points.at(-2).y, pitched.points.at(-2).y);
   close(yawed.points.at(-2).z, pitched.points.at(-2).z);
@@ -161,8 +181,8 @@ test("world-aligned tool segment stays parallel to the vertical rail", () => {
 
 test("IK can search the lift-axis travel for a high target", () => {
   const config = createConfig({ linearAxis: { position: 0 } });
-  const result = solveInverse({ x: 0.2, y: 0, z: 0.9 }, config, {
-    currentCommandsDeg: [0, 20, -40, 20],
+  const result = solveInverse({ x: 0.3, y: 0, z: 0.75 }, config, {
+    currentCommandsDeg: [20, 60, -100, 25],
     multiStart: true,
     optimizeSlide: true,
     checkPath: true,

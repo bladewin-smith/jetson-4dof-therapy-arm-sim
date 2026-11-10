@@ -126,11 +126,11 @@ export function forwardKinematicsModel(modelRad, config) {
   const points = [{ x: 0, y: 0, z: 0 }, shoulder];
   const jointOrigins = [];
   const jointAxesWorld = [];
-  const linkLengths = [0, l1, l2];
+  const linkLengths = [l1, l2];
   let position = [0, 0, h];
   let orientation = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
 
-  for (let index = 0; index < 3; index += 1) {
+  for (let index = 0; index < 2; index += 1) {
     const axis = localAxis(config.jointAxes[index]);
     jointOrigins.push([...position]);
     jointAxesWorld.push(multiplyMatrixVector(orientation, axis));
@@ -145,12 +145,15 @@ export function forwardKinematicsModel(modelRad, config) {
 
   const wrist = [...position];
   jointOrigins.push([...wrist]);
-  const terminalPitchAxis = localAxis("pitch");
-  jointAxesWorld.push(multiplyMatrixVector(orientation, terminalPitchAxis));
-  orientation = multiplyMatrix3(orientation, rotationMatrix(terminalPitchAxis, modelRad[3]));
+  jointAxesWorld.push([0, 0, 1]);
+  orientation = rotationMatrix([0, 0, 1], modelRad[2]);
   const verticalOffset = [0, 0, config.toolAssembly.verticalDirection * verticalLength];
   position = position.map((value, index) => value + verticalOffset[index]);
   points.push({ x: position[0], y: position[1], z: position[2] });
+  jointOrigins.push([...position]);
+  const terminalPitchAxis = localAxis("pitch");
+  jointAxesWorld.push(multiplyMatrixVector(orientation, terminalPitchAxis));
+  orientation = multiplyMatrix3(orientation, rotationMatrix(terminalPitchAxis, modelRad[3]));
   const terminalOffset = multiplyMatrixVector(orientation, [terminalLength, 0, 0]);
   position = position.map((value, index) => value + terminalOffset[index]);
   points.push({ x: position[0], y: position[1], z: position[2] });
@@ -180,10 +183,12 @@ export function forwardKinematicsModel(modelRad, config) {
 export function positionJacobian(modelRad, config) {
   const fk = forwardKinematicsModel(modelRad, config);
   const columns = fk.jointOrigins.map((origin, index) => {
-    const wristContribution = index < 3
+    const wristContribution = index < 2
       ? cross(fk.jointAxesWorld[index], fk.wrist.map((value, axisIndex) => value - origin[axisIndex]))
       : [0, 0, 0];
-    const terminalContribution = cross(fk.jointAxesWorld[index], fk.terminalOffset);
+    const terminalContribution = index >= 2
+      ? cross(fk.jointAxesWorld[index], fk.terminalOffset)
+      : [0, 0, 0];
     return wristContribution.map((value, axisIndex) => value + terminalContribution[axisIndex]);
   });
   const allColumns = [[0, 0, 1], ...columns];

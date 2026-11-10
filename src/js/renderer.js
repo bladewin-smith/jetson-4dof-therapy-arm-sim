@@ -90,11 +90,11 @@ export class ArmRenderer {
     }
   }
 
-  label(point, text, color = "#94a3b8") {
+  label(point, text, color = "#94a3b8", offsetX = 7, offsetY = -7) {
     const p = this.project(point);
     this.ctx.fillStyle = color;
     this.ctx.font = "11px Inter, system-ui, sans-serif";
-    this.ctx.fillText(text, p.x + 7, p.y - 7);
+    this.ctx.fillText(text, p.x + offsetX, p.y + offsetY);
   }
 
   drawGrid() {
@@ -136,7 +136,7 @@ export class ArmRenderer {
     this.line(bottom, top, "rgba(216,230,243,.65)", 2);
     this.point(bottom, 7, "#445467", "#c5d2de");
     this.point(carriage, 8, "#2dd4bf", "#dce7f3");
-    this.label(carriage, "P1 滑台", "#5eead4");
+    this.label(carriage, "P1 / J1", "#5eead4", 8, 18);
   }
 
   update(scene) {
@@ -189,8 +189,9 @@ export class ArmRenderer {
       this.line(points[index], points[index + 1], segmentColor, index === 0 ? 9 : 7);
     }
     points.forEach((p, index) => this.point(p, index === points.length - 1 ? 7 : 6, index === 0 ? "#64748b" : "#38bdf8", "#dce7f3"));
-    this.label(points.at(-4), "J3 偏航", "#fbbf24");
-    this.label(points.at(-3), "J4 俯仰", "#7dd3fc");
+    this.label(points.at(-4), "J2", "#dce7f3", 8, 18);
+    this.label(points.at(-3), "J3 偏航", "#fbbf24");
+    this.label(points.at(-2), "J4 俯仰", "#7dd3fc", 8, 18);
     this.point(points.at(-1), 4, this.scene.safe ? "#4ade80" : "#ef5b4c");
     this.label(points.at(-1), "TCP", this.scene.safe ? "#4ade80" : "#ef5b4c");
   }

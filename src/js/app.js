@@ -17,7 +17,7 @@ const format = (value, digits = 3) => Number.isFinite(value) ? value.toFixed(dig
 
 const state = {
   config: createConfig(),
-  commands: [15, 20, -60, 20],
+  commands: [20, 60, -100, 25],
   target: { x: 0.46, y: 0.12, z: 0.38 },
   workspace: [],
   lastIK: null,
@@ -399,7 +399,7 @@ function exportReport() {
 
 function reset() {
   state.config = createConfig();
-  state.commands = [15, 20, -60, 20];
+  state.commands = [20, 60, -100, 25];
   state.target = { x: 0.46, y: 0.12, z: 0.38 };
   state.lastIK = null;
   state.scanResult = null;
