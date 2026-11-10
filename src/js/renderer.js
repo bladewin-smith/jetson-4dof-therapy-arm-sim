@@ -127,6 +127,18 @@ export class ArmRenderer {
     }
   }
 
+  drawRail(rail) {
+    const bottom = { x: 0, y: 0, z: rail.bottom };
+    const top = { x: 0, y: 0, z: rail.top };
+    const carriage = { x: 0, y: 0, z: rail.carriage };
+    this.line(bottom, top, "rgba(0,0,0,.62)", 15);
+    this.line(bottom, top, "#718398", 10);
+    this.line(bottom, top, "rgba(216,230,243,.65)", 2);
+    this.point(bottom, 7, "#445467", "#c5d2de");
+    this.point(carriage, 8, "#2dd4bf", "#dce7f3");
+    this.label(carriage, "P1 滑台", "#5eead4");
+  }
+
   update(scene) {
     this.scene = scene;
     this.draw();
@@ -152,6 +164,8 @@ export class ArmRenderer {
     }
     this.ctx.globalAlpha = 1;
 
+    if (this.scene.rail) this.drawRail(this.scene.rail);
+
     for (const sample of this.scene.path || []) {
       this.point(sample.point, 2.1, sample.safe ? "rgba(56,189,248,.85)" : "rgba(239,91,76,.9)");
     }
@@ -166,9 +180,13 @@ export class ArmRenderer {
 
     const points = this.scene.fk.points;
     const armColor = this.scene.safe ? "#e8edf5" : "#ff7b6f";
-    for (let index = 0; index < points.length - 1; index += 1) {
+    const firstArmSegment = this.scene.rail ? 1 : 0;
+    for (let index = firstArmSegment; index < points.length - 1; index += 1) {
+      const segmentColor = index === points.length - 3
+        ? "#5eead4"
+        : index === points.length - 2 ? "#f8d267" : armColor;
       this.line(points[index], points[index + 1], "rgba(0,0,0,.5)", index === 0 ? 13 : 11);
-      this.line(points[index], points[index + 1], armColor, index === 0 ? 9 : 7);
+      this.line(points[index], points[index + 1], segmentColor, index === 0 ? 9 : 7);
     }
     points.forEach((p, index) => this.point(p, index === points.length - 1 ? 7 : 6, index === 0 ? "#64748b" : "#38bdf8", "#dce7f3"));
     this.point(points.at(-1), 4, this.scene.safe ? "#4ade80" : "#ef5b4c");

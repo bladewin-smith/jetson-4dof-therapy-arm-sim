@@ -73,6 +73,8 @@ h2 { margin: 6px 0 7px; font-size: 16px; }
 .joint-options { display: flex; align-items: center; gap: 5px; }
 .joint-options select { border: 1px solid rgba(56,189,248,.28); color: #8edcff; background: #0a1826; border-radius: 999px; padding: 4px 6px; font-size: 9px; outline: none; cursor: pointer; }
 .joint-options select:focus { border-color: var(--cyan); }
+.axis-badge { color: #8edcff; border: 1px solid rgba(56,189,248,.25); background: rgba(56,189,248,.07); border-radius: 999px; padding: 4px 7px; font-size: 9px; }
+.linear-axis-card b { color: var(--teal); background: rgba(45,212,191,.11); }
 .joint-title button { border: 1px solid rgba(74,222,128,.28); color: #80e9a2; background: rgba(74,222,128,.07); border-radius: 999px; padding: 4px 8px; font-size: 10px; cursor: pointer; min-width: 58px; }
 .joint-title button.reverse { color: #f5c46f; border-color: rgba(245,158,11,.35); background: rgba(245,158,11,.08); }
 .joint-input { gap: 8px; }
@@ -96,6 +98,7 @@ input[type="number"]:focus { border-color: var(--cyan); }
 .parameter-grid.three { grid-template-columns: repeat(3, 1fr); }
 .parameter-grid label { color: #7890a6; font-size: 8px; }
 .parameter-grid input { width: 100%; margin-top: 4px; }
+.parameter-grid select { width: 100%; margin-top: 4px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: #0a1522; padding: 6px 4px; outline: none; }
 .limit-grid, .zone-grid { display: grid; grid-template-columns: 22px 1fr 18px 1fr; gap: 5px; align-items: center; color: var(--muted); font-size: 9px; }
 .limit-grid input, .zone-grid input { width: 100%; }
 .config-body .button { margin-top: 13px; }

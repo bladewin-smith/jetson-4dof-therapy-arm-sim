@@ -17,9 +17,13 @@ const close = (actual, expected, tolerance = 1e-8) => assert.ok(Math.abs(actual 
 test("zero pose follows the positive X axis", () => {
   const config = createConfig();
   const fk = forwardKinematics([0, 0, 0, 0], config);
-  close(fk.pose.x, config.links.upperArm + config.links.forearm + config.links.tool);
+  close(fk.pose.x, config.links.upperArm + config.links.forearm + config.links.terminal);
   close(fk.pose.y, 0);
-  close(fk.pose.z, config.links.baseHeight);
+  close(
+    fk.pose.z,
+    config.links.baseHeight + config.linearAxis.position
+      + config.toolAssembly.verticalDirection * config.links.tool,
+  );
 });
 
 test("motor direction changes command-to-model mapping", () => {
@@ -92,7 +96,7 @@ test("configurable joint-axis Jacobian matches finite differences", () => {
     const a = forwardKinematicsModel(plus, config).pose;
     const b = forwardKinematicsModel(minus, config).pose;
     const numeric = [(a.x - b.x), (a.y - b.y), (a.z - b.z)].map((value) => value / (2 * epsilon));
-    for (let axis = 0; axis < 3; axis += 1) close(jacobian[axis][joint], numeric[axis], 2e-6);
+    for (let axis = 0; axis < 3; axis += 1) close(jacobian[axis][joint + 1], numeric[axis], 2e-6);
   }
 });
 
@@ -109,10 +113,50 @@ test("numeric IK solves a mixed yaw-pitch axis layout", () => {
   assert.ok(result.chosen.residual < 8e-4);
 });
 
-test("all-yaw layout is correctly classified as position-rank deficient", () => {
-  const config = createConfig({ jointAxes: ["yaw", "yaw", "yaw", "yaw"] });
+test("all-pitch layout remains position-rank deficient with the lift axis", () => {
+  const config = createConfig({ jointAxes: ["pitch", "pitch", "pitch", "pitch"] });
   const safety = evaluateSafety(commandsToModelRad([20, -30, 45, 15], config), config);
   assert.equal(safety.singularitySafe, false);
   assert.ok(safety.metrics.minSingularValue < 1e-8);
+});
+
+test("lift axis translates the full arm and contributes a Z Jacobian column", () => {
+  const low = createConfig({ linearAxis: { position: 0.1 } });
+  const high = createConfig({ linearAxis: { position: 0.3 } });
+  const commands = [15, 35, -60, 20];
+  const lowPose = forwardKinematics(commands, low).pose;
+  const highPose = forwardKinematics(commands, high).pose;
+  close(highPose.x, lowPose.x);
+  close(highPose.y, lowPose.y);
+  close(highPose.z - lowPose.z, 0.2);
+  const jacobian = positionJacobian(commandsToModelRad(commands, high), high);
+  close(jacobian[0][0], 0);
+  close(jacobian[1][0], 0);
+  close(jacobian[2][0], 1);
+});
+
+test("world-aligned tool segment stays parallel to the vertical rail", () => {
+  const config = createConfig({ jointAxes: ["yaw", "pitch", "yaw", "pitch"] });
+  const fk = forwardKinematics([42, -25, 55, 30], config);
+  const wrist = fk.points.at(-3);
+  const verticalEnd = fk.points.at(-2);
+  close(verticalEnd.x, wrist.x);
+  close(verticalEnd.y, wrist.y);
+  close(verticalEnd.z - wrist.z, config.toolAssembly.verticalDirection * config.links.tool);
+});
+
+test("IK can search the lift-axis travel for a high target", () => {
+  const config = createConfig({ linearAxis: { position: 0 } });
+  const result = solveInverse({ x: 0.2, y: 0, z: 0.9 }, config, {
+    currentCommandsDeg: [0, 20, -40, 20],
+    optimizePitch: true,
+    optimizeSlide: true,
+    checkPath: true,
+  });
+  assert.equal(result.reachable, true);
+  assert.equal(result.safeReachable, true);
+  assert.ok(result.chosen.slidePosition > 0);
+  assert.ok(result.chosen.residual < 1e-5);
+  assert.equal(result.chosen.path.safe, true);
 });
 

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Offline feasibility simulator for a configurable 4-DOF therapy arm on Jetson Orin Nano",
+  "description": "Offline feasibility simulator for a configurable P1+4R therapy arm on Jetson Orin Nano",
   "scripts": {
     "start": "python server.py",
     "test": "node --test tests/*.test.mjs"

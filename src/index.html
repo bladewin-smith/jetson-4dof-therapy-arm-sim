@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Jetson Orin Nano 4自由度理疗机械臂正逆运动学可行性验证">
-  <title>4DOF Therapy Arm Lab</title>
+  <meta name="description" content="Jetson Orin Nano P1+4R 理疗机械臂正逆运动学可行性验证">
+  <title>P1+4R Therapy Arm Lab</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
@@ -13,7 +13,7 @@
       <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
       <div>
         <h1>Therapy Arm Lab</h1>
-        <p>4DOF · Jetson feasibility simulator</p>
+        <p>P1 + 4R · Jetson feasibility simulator</p>
       </div>
     </div>
     <div class="top-actions">
@@ -32,6 +32,10 @@
       </section>
 
       <section class="joint-list">
+        <article class="joint-card linear-axis-card">
+          <div class="joint-title"><span><b>P1</b> 竖直升降滑台</span><span class="axis-badge">世界 Z 轴</span></div>
+          <div class="joint-input"><input id="slide-position" type="range" min="0" max="0.5" step="0.005"><input id="slide-position-value" type="number" min="0" max="0.5" step="0.005"><span>m</span></div>
+        </article>
         <article class="joint-card">
           <div class="joint-title"><span><b>J1</b> 关节 1</span><div class="joint-options"><select data-axis="0" aria-label="J1 旋转轴"><option value="yaw">偏航 Yaw</option><option value="pitch">俯仰 Pitch</option></select><button data-direction="0" type="button"></button></div></div>
           <div class="joint-input"><input id="q1" type="range" min="-170" max="170" step="0.5"><input id="q1-value" type="number" min="-170" max="170" step="0.5"><span>°</span></div>
@@ -48,7 +52,7 @@
           <div class="joint-title"><span><b>J4</b> 关节 4</span><div class="joint-options"><select data-axis="3" aria-label="J4 旋转轴"><option value="yaw">偏航 Yaw</option><option value="pitch">俯仰 Pitch</option></select><button data-direction="3" type="button"></button></div></div>
           <div class="joint-input"><input id="q4" type="range" min="-120" max="120" step="0.5"><input id="q4-value" type="number" min="-120" max="120" step="0.5"><span>°</span></div>
         </article>
-        <p class="axis-note">偏航 = 局部 Z 轴；俯仰 = 局部 −Y 轴。J1/J2 位于同一肩部原点，随后依次连接 L1、L2、L3。</p>
+        <p class="axis-note">P1 沿世界 Z 轴升降。偏航 = 局部 Z 轴；俯仰 = 局部 −Y 轴。J1/J2 位于滑台肩部原点，末端竖直段保持与导轨平行。</p>
       </section>
 
       <details class="config-panel">
@@ -56,10 +60,17 @@
         <div class="config-body">
           <div class="config-label">连杆尺寸 / m</div>
           <div class="parameter-grid four">
-            <label>底座 h<input id="link-base" type="number" min="0.01" max="2" step="0.01"></label>
+            <label>导轨基准 h0<input id="link-base" type="number" min="0.01" max="2" step="0.01"></label>
             <label>上臂 L1<input id="link-upper" type="number" min="0.01" max="2" step="0.01"></label>
             <label>前臂 L2<input id="link-forearm" type="number" min="0.01" max="2" step="0.01"></label>
-            <label>工具 L3<input id="link-tool" type="number" min="0.01" max="2" step="0.01"></label>
+            <label>竖直末端 Lv<input id="link-tool" type="number" min="0.01" max="2" step="0.01"></label>
+            <label>新增末端 L4<input id="link-terminal" type="number" min="0.01" max="2" step="0.01"></label>
+          </div>
+          <div class="config-label">升降轴与竖直末端</div>
+          <div class="parameter-grid three">
+            <label>行程下限 / m<input id="slide-min" type="number" min="0" max="2" step="0.01"></label>
+            <label>行程上限 / m<input id="slide-max" type="number" min="0.01" max="2" step="0.01"></label>
+            <label>末端方向<select id="vertical-direction"><option value="-1">向下</option><option value="1">向上</option></select></label>
           </div>
           <div class="config-label">数学关节限位 / °</div>
           <div class="limit-grid">
@@ -94,6 +105,7 @@
           <label>Z / m<input id="target-z" type="number" value="0.38" min="0" max="1" step="0.01"></label>
         </div>
         <label class="check-row"><input id="multi-start" type="checkbox" checked><span>使用多初值搜索冗余构型，优先寻找远离奇异点的解</span></label>
+        <label class="check-row"><input id="auto-slide" type="checkbox" checked><span>逆解自动搜索 P1 升降位置；关闭后使用当前滑台位置</span></label>
         <button id="solve-ik" class="button primary wide" type="submit">求解并移动到目标</button>
       </form>
 
@@ -149,6 +161,7 @@
         <section class="mini-card"><span>条件数</span><strong id="condition-value">—</strong><small>上限 60</small></section>
         <section class="mini-card"><span>最小限位余量</span><strong id="margin-value">—</strong><small>下限 4°</small></section>
         <section class="mini-card"><span>治疗空间</span><strong id="zone-value">—</strong><small>末端位置</small></section>
+        <section class="mini-card"><span>升降滑台</span><strong id="slide-value">—</strong><small>绝对高度</small></section>
       </div>
 
       <section class="notice-card">
@@ -159,9 +172,10 @@
       <section class="method-card">
         <div class="eyebrow">计算方法</div>
         <ul>
-          <li>4R：每个局部关节轴可选偏航/俯仰</li>
+          <li>P1 + 4R：升降轴加四个可配置旋转轴</li>
           <li>经典构型解析逆解，任意轴组合采用数值 DLS</li>
-          <li>3×4 位置雅可比 SVD 指标</li>
+          <li>世界 Z 对齐竖直末端 + 新增 L4 末端连杆</li>
+          <li>3×5 位置雅可比 SVD 指标</li>
           <li>关节插值路径逐点安全检查</li>
         </ul>
       </section>

@@ -65,6 +65,19 @@ function updateJointControls() {
     range.value = value;
     number.value = value.toFixed(1);
   });
+  updateSlideControls();
+}
+
+function updateSlideControls() {
+  const range = $("#slide-position");
+  const number = $("#slide-position-value");
+  const { minPosition, maxPosition, position } = state.config.linearAxis;
+  range.min = minPosition;
+  range.max = maxPosition;
+  number.min = minPosition;
+  number.max = maxPosition;
+  range.value = position;
+  number.value = position.toFixed(3);
 }
 
 function clampCommandsToLimits() {
@@ -83,11 +96,15 @@ function updateZoneSummary() {
 }
 
 function populateConfigInputs() {
-  const { links, jointLimitsDeg: limits, therapyZone: zone, safety } = state.config;
+  const { links, linearAxis, toolAssembly, jointLimitsDeg: limits, therapyZone: zone, safety } = state.config;
   $("#link-base").value = links.baseHeight;
   $("#link-upper").value = links.upperArm;
   $("#link-forearm").value = links.forearm;
   $("#link-tool").value = links.tool;
+  $("#link-terminal").value = links.terminal;
+  $("#slide-min").value = linearAxis.minPosition;
+  $("#slide-max").value = linearAxis.maxPosition;
+  $("#vertical-direction").value = String(toolAssembly.verticalDirection);
   limits.forEach(([min, max], index) => {
     $(`#limit-q${index + 1}-min`).value = min;
     $(`#limit-q${index + 1}-max`).value = max;
@@ -112,6 +129,15 @@ function applyConfiguration() {
       upperArm: Number($("#link-upper").value),
       forearm: Number($("#link-forearm").value),
       tool: Number($("#link-tool").value),
+      terminal: Number($("#link-terminal").value),
+    },
+    linearAxis: {
+      minPosition: Number($("#slide-min").value),
+      maxPosition: Number($("#slide-max").value),
+      position: state.config.linearAxis.position,
+    },
+    toolAssembly: {
+      verticalDirection: Number($("#vertical-direction").value),
     },
     jointLimitsDeg: Array.from({ length: 4 }, (_, index) => [
       Number($(`#limit-q${index + 1}-min`).value),
@@ -129,6 +155,7 @@ function applyConfiguration() {
   };
   const allNumbers = [
     ...Object.values(values.links),
+    ...Object.values(values.linearAxis),
     ...values.jointLimitsDeg.flat(),
     ...Object.values(values.therapyZone).flat(),
     ...Object.values(values.safety),
@@ -141,12 +168,22 @@ function applyConfiguration() {
     error.textContent = "连杆尺寸必须大于 0。";
     return;
   }
+  if (values.linearAxis.minPosition >= values.linearAxis.maxPosition) {
+    error.textContent = "升降轴行程下限必须小于上限。";
+    return;
+  }
+  values.linearAxis.position = Math.max(
+    values.linearAxis.minPosition,
+    Math.min(values.linearAxis.maxPosition, values.linearAxis.position),
+  );
   if (values.jointLimitsDeg.some(([min, max]) => min >= max) || Object.values(values.therapyZone).some(([min, max]) => min >= max)) {
     error.textContent = "每组下限必须小于上限。";
     return;
   }
   state.config = createConfig({
     links: values.links,
+    linearAxis: values.linearAxis,
+    toolAssembly: values.toolAssembly,
     jointLimitsDeg: values.jointLimitsDeg,
     jointAxes: state.config.jointAxes,
     directions: state.config.directions,
@@ -172,6 +209,11 @@ function render() {
   renderer.update({
     fk: safety.fk,
     safe: safety.safe,
+    rail: {
+      bottom: 0,
+      top: state.config.links.baseHeight + state.config.linearAxis.maxPosition,
+      carriage: state.config.links.baseHeight + state.config.linearAxis.position,
+    },
     target: state.target,
     zone: state.config.therapyZone,
     workspace: state.workspace,
@@ -184,19 +226,32 @@ function render() {
   $("#condition-value").textContent = format(safety.metrics.conditionNumber, 1);
   $("#margin-value").textContent = `${format(safety.jointMarginDeg, 1)}°`;
   $("#zone-value").textContent = inTherapyZone(pose, state.config.therapyZone) ? "内部" : "外部";
+  $("#slide-value").textContent = `${format(state.config.links.baseHeight + state.config.linearAxis.position, 3)} m`;
 
   const meter = Math.min(100, Math.max(0, safety.metrics.minSingularValue / (state.config.safety.minSingularValue * 2.5) * 100));
   $("#sigma-meter").style.width = `${meter}%`;
   $("#sigma-meter").className = safety.singularitySafe ? "meter-fill safe" : "meter-fill danger";
 
   if (safety.safe) {
-    setStatus("safe", "当前姿态通过基础安全检查", "关节限位、位置雅可比、底座禁入区与地面约束均通过");
+    setStatus("safe", "当前姿态通过基础安全检查", "升降行程、关节限位、位置雅可比、底座禁入区与地面约束均通过");
   } else {
     setStatus("danger", "当前姿态不安全", safety.reasons.join(" · ") || "未知约束失败");
   }
 }
 
 function bindJointInputs() {
+  const updateSlide = (raw) => {
+    const { minPosition, maxPosition } = state.config.linearAxis;
+    state.config.linearAxis.position = Math.max(minPosition, Math.min(maxPosition, Number(raw)));
+    updateSlideControls();
+    state.workspace = sampleWorkspace(state.config, 1200);
+    state.lastIK = null;
+    state.scanResult = null;
+    $("#coverage-card").hidden = true;
+    render();
+  };
+  $("#slide-position").addEventListener("input", (event) => updateSlide(event.target.value));
+  $("#slide-position-value").addEventListener("change", (event) => updateSlide(event.target.value));
   for (let index = 0; index < 4; index += 1) {
     const range = $(`#q${index + 1}`);
     const number = $(`#q${index + 1}-value`);
@@ -245,8 +300,10 @@ function readTarget() {
 function solveTarget() {
   readTarget();
   const optimizePitch = $("#multi-start").checked;
+  const optimizeSlide = $("#auto-slide").checked;
   const result = solveInverse(state.target, state.config, {
     optimizePitch,
+    optimizeSlide,
     currentCommandsDeg: state.commands,
     checkPath: true,
   });
@@ -259,12 +316,14 @@ function solveTarget() {
   }
 
   const chosen = result.chosen;
+  state.config.linearAxis.position = chosen.slidePosition;
   state.commands = chosen.commandsDeg.map((value) => Number(value.toFixed(4)));
+  state.workspace = sampleWorkspace(state.config, 1200);
   updateJointControls();
   render();
   if (result.safeReachable) {
-    const method = result.method === "analytic" ? "经典构型解析搜索" : "任意轴数值 DLS";
-    setStatus("safe", "已找到安全逆解与插值路径", `${method}；${result.safeSolutionCount} 个候选通过；残差 ${format(chosen.residual * 1000, 2)} mm`);
+    const method = result.method.startsWith("analytic") ? "经典构型解析搜索" : "任意轴数值 DLS";
+    setStatus("safe", "已找到安全逆解与插值路径", `${method}；P1 ${format(chosen.slidePosition, 3)} m；${result.safeSolutionCount} 个候选通过；残差 ${format(chosen.residual * 1000, 2)} mm`);
   } else {
     setStatus("warn", "仅找到带风险的几何逆解", chosen.safety.reasons.join(" · ") || "关节插值路径穿过风险区");
   }
@@ -290,6 +349,7 @@ async function scanTherapyZone() {
         };
         const result = solveInverse(target, state.config, {
           optimizePitch: true,
+          optimizeSlide: true,
           currentCommandsDeg: state.commands,
           checkPath: false,
         });
@@ -304,7 +364,7 @@ async function scanTherapyZone() {
   state.scanResult = { ...counts, failures };
   const percent = counts.safe / counts.total * 100;
   $("#coverage-value").textContent = `${format(percent, 1)}%`;
-  $("#coverage-detail").textContent = `${counts.safe}/${counts.total} 个网格点存在安全姿态；几何可达 ${counts.reachable}/${counts.total}`;
+  $("#coverage-detail").textContent = `${counts.safe}/${counts.total} 个网格点在 P1 行程内存在安全姿态；几何可达 ${counts.reachable}/${counts.total}`;
   $("#coverage-bar").style.width = `${percent}%`;
   $("#coverage-card").hidden = false;
   button.disabled = false;
@@ -347,6 +407,7 @@ function reset() {
   $("#target-y").value = state.target.y;
   $("#target-z").value = state.target.z;
   $("#multi-start").checked = true;
+  $("#auto-slide").checked = true;
   $("#coverage-card").hidden = true;
   state.workspace = sampleWorkspace(state.config, 1200);
   populateConfigInputs();

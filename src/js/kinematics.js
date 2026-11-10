@@ -8,6 +8,15 @@ export const DEFAULT_CONFIG = Object.freeze({
     upperArm: 0.32,
     forearm: 0.28,
     tool: 0.16,
+    terminal: 0.12,
+  }),
+  linearAxis: Object.freeze({
+    minPosition: 0,
+    maxPosition: 0.50,
+    position: 0.22,
+  }),
+  toolAssembly: Object.freeze({
+    verticalDirection: -1,
   }),
   jointLimitsDeg: Object.freeze([
     Object.freeze([-170, 170]),
@@ -34,6 +43,8 @@ export const DEFAULT_CONFIG = Object.freeze({
 export function createConfig(overrides = {}) {
   return {
     links: { ...DEFAULT_CONFIG.links, ...(overrides.links || {}) },
+    linearAxis: { ...DEFAULT_CONFIG.linearAxis, ...(overrides.linearAxis || {}) },
+    toolAssembly: { ...DEFAULT_CONFIG.toolAssembly, ...(overrides.toolAssembly || {}) },
     jointLimitsDeg: (overrides.jointLimitsDeg || DEFAULT_CONFIG.jointLimitsDeg).map((v) => [...v]),
     jointAxes: [...(overrides.jointAxes || DEFAULT_CONFIG.jointAxes)],
     directions: [...(overrides.directions || DEFAULT_CONFIG.directions)],
@@ -69,6 +80,10 @@ export function forwardKinematics(commandsDeg, config) {
   return forwardKinematicsModel(commandsToModelRad(commandsDeg, config), config);
 }
 
+export function shoulderHeight(config) {
+  return config.links.baseHeight + config.linearAxis.position;
+}
+
 function multiplyMatrix3(a, b) {
   return a.map((row) => [0, 1, 2].map((column) => row.reduce((sum, value, index) => sum + value * b[index][column], 0)));
 }
@@ -102,12 +117,13 @@ function localAxis(type) {
 }
 
 export function forwardKinematicsModel(modelRad, config) {
-  const { baseHeight: h, upperArm: l1, forearm: l2, tool: l3 } = config.links;
+  const { upperArm: l1, forearm: l2, tool: verticalLength, terminal: terminalLength } = config.links;
+  const h = shoulderHeight(config);
   const shoulder = { x: 0, y: 0, z: h };
   const points = [{ x: 0, y: 0, z: 0 }, shoulder];
   const jointOrigins = [];
   const jointAxesWorld = [];
-  const linkLengths = [0, l1, l2, l3];
+  const linkLengths = [0, l1, l2, 0];
   let position = [0, 0, h];
   let orientation = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
 
@@ -124,6 +140,14 @@ export function forwardKinematicsModel(modelRad, config) {
     }
   }
 
+  const wrist = [...position];
+  const verticalOffset = [0, 0, config.toolAssembly.verticalDirection * verticalLength];
+  position = position.map((value, index) => value + verticalOffset[index]);
+  points.push({ x: position[0], y: position[1], z: position[2] });
+  const terminalOffset = multiplyMatrixVector(orientation, [terminalLength, 0, 0]);
+  position = position.map((value, index) => value + terminalOffset[index]);
+  points.push({ x: position[0], y: position[1], z: position[2] });
+
   const end = { x: position[0], y: position[1], z: position[2] };
   const toolDirection = multiplyMatrixVector(orientation, [1, 0, 0]);
 
@@ -133,6 +157,9 @@ export function forwardKinematicsModel(modelRad, config) {
     points,
     jointOrigins,
     jointAxesWorld,
+    wrist,
+    terminalOffset,
+    verticalOffset,
     orientation,
     pose: {
       ...end,
@@ -145,12 +172,15 @@ export function forwardKinematicsModel(modelRad, config) {
 
 export function positionJacobian(modelRad, config) {
   const fk = forwardKinematicsModel(modelRad, config);
-  const end = [fk.pose.x, fk.pose.y, fk.pose.z];
   const columns = fk.jointOrigins.map((origin, index) => {
-    const radius = end.map((value, axisIndex) => value - origin[axisIndex]);
-    return cross(fk.jointAxesWorld[index], radius);
+    const wristContribution = index < 3
+      ? cross(fk.jointAxesWorld[index], fk.wrist.map((value, axisIndex) => value - origin[axisIndex]))
+      : [0, 0, 0];
+    const terminalContribution = cross(fk.jointAxesWorld[index], fk.terminalOffset);
+    return wristContribution.map((value, axisIndex) => value + terminalContribution[axisIndex]);
   });
-  return [0, 1, 2].map((row) => columns.map((column) => column[row]));
+  const allColumns = [[0, 0, 1], ...columns];
+  return [0, 1, 2].map((row) => allColumns.map((column) => column[row]));
 }
 
 function multiplyByTranspose(matrix) {
@@ -193,11 +223,17 @@ export function eigenvaluesSymmetric3(input) {
 
 export function singularityMetrics(modelRad, config) {
   const jacobian = positionJacobian(modelRad, config);
-  const eigenvalues = eigenvaluesSymmetric3(multiplyByTranspose(jacobian));
+  const characteristicLength = config.links.upperArm + config.links.forearm + config.links.terminal;
+  const normalizedJacobian = jacobian.map((row) => row.map((value, column) => (
+    column === 0 ? value * characteristicLength : value
+  )));
+  const eigenvalues = eigenvaluesSymmetric3(multiplyByTranspose(normalizedJacobian));
   const singularValues = eigenvalues.map((value) => Math.sqrt(Math.max(0, value)));
   const [maximum, , minimum] = singularValues;
   return {
     jacobian,
+    normalizedJacobian,
+    characteristicLength,
     singularValues,
     minSingularValue: minimum,
     maxSingularValue: maximum,
@@ -220,9 +256,14 @@ export function evaluateSafety(modelRad, config) {
   });
   const withinLimits = marginsDeg.every((value) => value >= -1e-7);
   const jointMarginDeg = Math.min(...marginsDeg);
+  const slideMargin = Math.min(
+    config.linearAxis.position - config.linearAxis.minPosition,
+    config.linearAxis.maxPosition - config.linearAxis.position,
+  );
+  const withinSlideLimits = slideMargin >= -1e-9;
   const aboveFloor = fk.points.slice(2).every((point) => point.z >= config.safety.floorHeight);
   const baseClear = fk.points.slice(2).every((point) => (
-    point.z >= config.links.baseHeight || distancePointToVerticalAxis(point) >= config.safety.baseKeepoutRadius
+    point.z >= shoulderHeight(config) || distancePointToVerticalAxis(point) >= config.safety.baseKeepoutRadius
   ));
   const singularitySafe = (
     metrics.minSingularValue >= config.safety.minSingularValue
@@ -232,18 +273,21 @@ export function evaluateSafety(modelRad, config) {
   const reasons = [];
   if (!withinLimits) reasons.push("关节限位超出");
   else if (!marginSafe) reasons.push("关节限位余量不足");
+  if (!withinSlideLimits) reasons.push("升降轴超出行程");
   if (!singularitySafe) reasons.push("接近位置奇异点");
   if (!aboveFloor) reasons.push("连杆低于安全地面");
   if (!baseClear) reasons.push("连杆进入底座禁入区");
 
   return {
-    safe: withinLimits && marginSafe && singularitySafe && aboveFloor && baseClear,
+    safe: withinLimits && withinSlideLimits && marginSafe && singularitySafe && aboveFloor && baseClear,
     withinLimits,
+    withinSlideLimits,
     marginSafe,
     singularitySafe,
     aboveFloor,
     baseClear,
     jointMarginDeg,
+    slideMargin,
     marginsDeg,
     reasons,
     metrics,
@@ -271,7 +315,7 @@ function limitEquivalentAngle(angleRad, limitDeg) {
   return normalizeRad(angleRad);
 }
 
-export function evaluateJointPath(startCommandsDeg, endCommandsDeg, config, steps = 36) {
+export function evaluateJointPath(startCommandsDeg, endCommandsDeg, config, steps = 36, linearAxisRange = null) {
   let minimumSigma = Infinity;
   let maximumCondition = 0;
   let minimumMargin = Infinity;
@@ -281,7 +325,16 @@ export function evaluateJointPath(startCommandsDeg, endCommandsDeg, config, step
   for (let index = 0; index <= steps; index += 1) {
     const t = index / steps;
     const command = startCommandsDeg.map((start, joint) => start + (endCommandsDeg[joint] - start) * t);
-    const result = evaluateSafety(commandsToModelRad(command, config), config);
+    const sampleConfig = linearAxisRange
+      ? createConfig({
+        ...config,
+        linearAxis: {
+          ...config.linearAxis,
+          position: linearAxisRange.start + (linearAxisRange.end - linearAxisRange.start) * t,
+        },
+      })
+      : config;
+    const result = evaluateSafety(commandsToModelRad(command, sampleConfig), sampleConfig);
     minimumSigma = Math.min(minimumSigma, result.metrics.minSingularValue);
     maximumCondition = Math.max(maximumCondition, result.metrics.conditionNumber);
     minimumMargin = Math.min(minimumMargin, result.jointMarginDeg);
@@ -305,7 +358,8 @@ function solveClassicInverse(target, config, options = {}) {
   const optimizePitch = options.optimizePitch ?? true;
   const currentCommandsDeg = options.currentCommandsDeg || [0, 0, 0, 0];
   const checkPath = options.checkPath ?? true;
-  const { baseHeight: h, upperArm: l1, forearm: l2, tool: l3 } = config.links;
+  const { upperArm: l1, forearm: l2, tool: verticalLength, terminal: l3 } = config.links;
+  const h = shoulderHeight(config) + config.toolAssembly.verticalDirection * verticalLength;
   const targetRadius = Math.hypot(target.x, target.y);
   const baseYaw = Math.atan2(target.y, target.x);
   const solutions = [];
@@ -411,7 +465,7 @@ function solveDampedLeastSquares(target, seed, config) {
     if (residual < best.residual) best = { modelRad: [...modelRad], residual, iterations: iteration };
     if (residual < 5e-5) break;
 
-    const jacobian = positionJacobian(modelRad, config);
+    const jacobian = positionJacobian(modelRad, config).map((row) => row.slice(1));
     const normal = multiplyByTranspose(jacobian);
     const damping = 0.012 + Math.min(0.055, residual * 0.08);
     for (let axis = 0; axis < 3; axis += 1) normal[axis][axis] += damping ** 2;
@@ -511,7 +565,7 @@ function usesClassicAxisLayout(config) {
   return config.jointAxes.join(",") === "yaw,pitch,pitch,pitch";
 }
 
-export function solveInverse(target, config, options = {}) {
+function solveInverseAtFixedSlide(target, config, options = {}) {
   if (usesClassicAxisLayout(config)) {
     const result = solveClassicInverse(target, config, options);
     result.method = "analytic";
@@ -519,6 +573,59 @@ export function solveInverse(target, config, options = {}) {
     return result;
   }
   return solveNumericInverse(target, config, options);
+}
+
+export function solveInverse(target, config, options = {}) {
+  if (!(options.optimizeSlide ?? false)) {
+    const result = solveInverseAtFixedSlide(target, config, options);
+    result.solutions.forEach((solution) => { solution.slidePosition = config.linearAxis.position; });
+    if (result.chosen) result.chosen.slidePosition = config.linearAxis.position;
+    return result;
+  }
+
+  const startSlide = config.linearAxis.position;
+  const { minPosition, maxPosition } = config.linearAxis;
+  const candidates = [startSlide];
+  for (let index = 0; index <= 10; index += 1) {
+    const position = minPosition + (maxPosition - minPosition) * index / 10;
+    if (!candidates.some((value) => Math.abs(value - position) < 1e-8)) candidates.push(position);
+  }
+  candidates.sort((a, b) => Math.abs(a - startSlide) - Math.abs(b - startSlide));
+
+  const solutions = [];
+  for (const position of candidates) {
+    const candidateConfig = createConfig({
+      ...config,
+      linearAxis: { ...config.linearAxis, position },
+    });
+    const fixed = solveInverseAtFixedSlide(target, candidateConfig, { ...options, checkPath: false });
+    for (const solution of fixed.solutions) {
+      solution.slidePosition = position;
+      solution.path = (options.checkPath ?? true)
+        ? evaluateJointPath(
+          options.currentCommandsDeg || [0, 0, 0, 0],
+          solution.commandsDeg,
+          candidateConfig,
+          24,
+          { start: startSlide, end: position },
+        )
+        : null;
+      solution.score += (solution.path?.safe ? 5000 : 0) - Math.abs(position - startSlide) * 120;
+      solutions.push(solution);
+    }
+  }
+
+  solutions.sort((a, b) => b.score - a.score);
+  const checkPath = options.checkPath ?? true;
+  const safeSolutions = solutions.filter((solution) => solution.safety.safe && (!checkPath || solution.path?.safe));
+  return {
+    reachable: solutions.length > 0,
+    safeReachable: safeSolutions.length > 0,
+    chosen: safeSolutions[0] || solutions[0] || null,
+    solutions,
+    safeSolutionCount: safeSolutions.length,
+    method: usesClassicAxisLayout(config) ? "analytic+linear-search" : "numeric-dls+linear-search",
+  };
 }
 
 function halton(index, base) {
@@ -562,6 +669,8 @@ export function inTherapyZone(point, zone) {
 export function configurationSummary(config) {
   return {
     links: { ...config.links },
+    linearAxis: { ...config.linearAxis },
+    toolAssembly: { ...config.toolAssembly },
     jointLimitsDeg: config.jointLimitsDeg.map((limit) => [...limit]),
     jointAxes: [...config.jointAxes],
     directions: [...config.directions],
